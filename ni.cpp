@@ -225,7 +225,7 @@ void ni::init(uint32_t width, uint32_t height) {
     loadPIX();
 
 #if _DEBUG
-    D3D_ASSERT(D3D12GetDebugInterface(IID_PPV_ARGS(&renderer.debugInterface)), "Failed to create debug interface");
+    NI_D3D_ASSERT(D3D12GetDebugInterface(IID_PPV_ARGS(&renderer.debugInterface)), "Failed to create debug interface");
     renderer.debugInterface->EnableDebugLayer();
     renderer.debugInterface->SetEnableGPUBasedValidation(true);
     UINT factoryFlag = DXGI_CREATE_FACTORY_DEBUG;
@@ -368,7 +368,7 @@ void ni::destroy() {
                     DXGI_DEBUG_RLO_IGNORE_INTERNAL));
             dxgiDebug->Release();
         }
-        D3D_RELEASE(renderer.debugInterface);
+        NI_D3D_RELEASE(renderer.debugInterface);
     }
 #endif
 

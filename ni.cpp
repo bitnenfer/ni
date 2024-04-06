@@ -349,6 +349,7 @@ void ni::destroy() {
         WaitForSingleObject(renderer.presentFenceEvent, INFINITE);
     }
     CloseHandle(renderer.presentFenceEvent);
+    NI_D3D_RELEASE(renderer.dsvDescriptorHeap);
     NI_D3D_RELEASE(renderer.rtvDescriptorHeap);
     NI_D3D_RELEASE(renderer.presentFence);
     NI_D3D_RELEASE(renderer.swapChain);

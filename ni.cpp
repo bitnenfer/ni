@@ -822,10 +822,19 @@ size_t ni::getDXGIFormatBytes(DXGI_FORMAT format) {
 ni::Texture* ni::createTexture(const wchar_t* name, uint32_t width, uint32_t height, uint32_t depth, const void* pixels, DXGI_FORMAT dxgiFormat, D3D12_RESOURCE_FLAGS flags) {
     NI_ASSERT(depth == 1, "No 3D textures supported yet.");
     Texture* texture = new Texture();
-    D3D12_RESOURCE_STATES initialState = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
     D3D12_RESOURCE_DIMENSION dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+
+    if (width > 1 && height > 1 && depth > 1) {
+        dimension = D3D12_RESOURCE_DIMENSION_TEXTURE3D;
+    } else if (width >= 1 && height >= 1 && depth == 1) {
+        dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+    } else if (width >= 1 && height == 1 && depth == 1) {
+        dimension = D3D12_RESOURCE_DIMENSION_TEXTURE1D;
+    }
+
+    D3D12_RESOURCE_STATES initialState = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
     D3D12_RESOURCE_DESC resourceDesc = {
-        D3D12_RESOURCE_DIMENSION_TEXTURE2D,
+        dimension,
         D3D12_DEFAULT_RESOURCE_PLACEMENT_ALIGNMENT,
         (uint64_t)width,
         height,
@@ -873,10 +882,10 @@ ni::Texture* ni::createTexture(const wchar_t* name, uint32_t width, uint32_t hei
     if (pixels != nullptr) {
         size_t pixelSize = ni::getDXGIFormatBytes(dxgiFormat);
         uint64_t alignedWidth = alignSize(width, D3D12_TEXTURE_DATA_PITCH_ALIGNMENT);
-        uint64_t dataSize = alignedWidth * height * pixelSize;
+        uint64_t dataSize = alignedWidth * height * depth * pixelSize;
         uint64_t bufferSize = dataSize < 256 ? 256 : dataSize;
         texture->upload = ni::createBuffer(L"SpriteImage::upload", bufferSize, ni::UPLOAD_BUFFER, false);
-        texture->cpuData = malloc(pixelSize * width * height);
+        texture->cpuData = malloc(pixelSize * width * height * depth);
         NI_ASSERT(texture->cpuData != nullptr, "Failed to allocate cpu data for uploading to texture memory");
         if (texture->cpuData != nullptr) {
             memcpy((void*)texture->cpuData, pixels, pixelSize * width * height);
@@ -1023,3 +1032,1301 @@ D3D12_CPU_DESCRIPTOR_HANDLE ni::DescriptorTable::cpuHandle(uint64_t index) {
     handle.ptr += (index * handleSize);
     return handle;
 }
+
+float ni::toRad(float d) { return ni::PI * d / 180.0f; }
+
+float ni::toDeg(float r) { return 180.0f * r / ni::PI; }
+
+float ni::cos(float t) { return cosf(t); }
+
+float ni::sin(float t) { return sinf(t); }
+
+float ni::tan(float t) { return tanf(t); }
+
+float ni::asin(float t) { return asinf(t); }
+
+float ni::acos(float t) { return acosf(t); }
+
+float ni::atan(float t) { return atanf(t); }
+
+float ni::atan2(float y, float x) { return atan2f(y, x); }
+
+float ni::pow(float x, float y) { return powf(x, y); }
+
+float ni::exp(float x) { return expf(x); }
+
+float ni::exp2(float x) { return exp2f(x); }
+
+float ni::log(float x) { return logf(x); }
+
+float ni::log2(float x) { return log2f(x); }
+
+float ni::sqrt(float x) { return sqrtf(x); }
+
+float ni::invSqrt(float x) { return 1.0f / sqrtf(x); }
+
+float ni::abs(float x) { return fabsf(x); }
+
+float ni::round(float x) { return roundf(x); }
+
+float ni::sign(float x) { return (x < 0.0f ? -1.0f : 1.0f); }
+
+float ni::floor(float x) { return floorf(x); }
+
+float ni::ceil(float x) { return ceilf(x); }
+
+float ni::fract(float x) { return x - floorf(x); }
+
+float ni::mod(float x, float y) { return fmodf(x, y); }
+
+float ni::clamp(float n, float x, float y) { return (n < x ? x : n > y ? y : n); }
+
+float ni::mix(float x, float y, float n) { return x * (1.0f - n) + y * n; }
+
+float ni::step(float edge, float x) { return (x < edge ? 0.0f : 1.0f); }
+
+float ni::smootStep(float edge0, float edge1, float x)
+{
+    if (x < edge0) return 0.0f;
+    if (x > edge1) return 1.0f;
+    float t = ni::clamp((x - edge0) / (edge1 - edge0), 0.0f, 1.0f);
+    return t * t * (3.0f - 2.0f * t);
+}
+
+float ni::saturate(float Value)
+{
+    return ni::clamp(Value, 0.0f, 1.0f);
+}
+
+float ni::normalize(float Value, float MinValue, float MaxValue)
+{
+    return (Value - MinValue) / (MaxValue - MinValue);
+}
+
+float ni::random()
+{
+    return (float)rand() / (float)RAND_MAX;
+}
+
+namespace ni {
+    Float2::Float2() : x(0.0f), y(0.0f) {}
+
+    Float2::Float2(float x) : x(x), y(x) {}
+
+    Float2::Float2(float x, float y) : x(x), y(y) {}
+
+    Float2& Float2::normalize()
+    {
+        float len = length();
+        if (len != 0.0f)
+        {
+            x /= len;
+            y /= len;
+        }
+        return *this;
+    }
+
+    Float2& Float2::faceForward(const Float2& incident, const Float2& reference)
+    {
+        if (incident.dot(reference) >= 0.0f)
+        {
+            *this *= -1.0f;
+        }
+        return *this;
+    }
+
+    Float2& Float2::reflect(const Float2& normal)
+    {
+        *this -= 2.0f * dot(normal) * normal;
+        return *this;
+    }
+
+    Float2& Float2::refract(const Float2& normal, float indexOfRefraction)
+    {
+        Float2 incident = *this;
+        float IdotN = incident.dot(normal);
+        float k = 1.0f - indexOfRefraction * indexOfRefraction * (1.0f - IdotN * IdotN);
+        if (k < 0.0f) *this = 0.0f;
+        else *this = indexOfRefraction * incident - (indexOfRefraction * IdotN + ni::sqrt(k)) * normal;
+        return *this;
+    }
+
+    Float3 Float2::toFloat3() { return Float3(x, y, 0.0f); }
+    Float4 Float2::toFloat4() { return Float4(x, y, 0.0f, 0.0f); }
+    Float2& Float2::operator*=(const Float2x2& m)
+    {
+        float tx = m.data[0] * x + m.data[2] * y;
+        float ty = m.data[1] * x + m.data[3] * y;
+        x = tx;
+        y = ty;
+        return *this;
+    }
+
+    Float3::Float3() : x(0.0f), y(0.0f), z(0.0f) {}
+
+    Float3::Float3(float x) : x(x), y(x), z(x) {}
+
+    Float3::Float3(float x, float y, float z) : x(x), y(y), z(z) {}
+
+    float Float3::lengthSqr() const { return x * x + y * y + z * z; }
+
+    float Float3::length() const { return ni::sqrt(lengthSqr()); }
+
+    float Float3::dot(const Float3& n) const { return x * n.x + y * n.y + z * n.z; }
+
+    float Float3::distance(const Float3& n) const { return (*this - n).length(); }
+
+    Float3& Float3::normalize()
+    {
+        float len = x * x + y * y + z * z;
+        if (len > 0)
+        {
+            len = 1 / ni::sqrt(len);
+        }
+        if (len != 0.0f)
+        {
+            x /= len;
+            y /= len;
+            z /= len;
+        }
+        return *this;
+    }
+
+    Float3& Float3::cross(const Float3& n)
+    {
+        float cx = y * n.z - n.y * z;
+        float cy = z * n.x - n.z * x;
+        float cz = x * n.y - n.x * y;
+        x = cx;
+        y = cy;
+        z = cz;
+        return *this;
+    }
+
+    Float3& Float3::faceForward(const Float3& incident, const Float3& reference)
+    {
+        if (incident.dot(reference) >= 0.0f)
+        {
+            *this *= -1.0f;
+        }
+        return *this;
+    }
+
+    Float3& Float3::reflect(const Float3& normal)
+    {
+        *this = *this - 2.0f * dot(normal) * normal;
+        return *this;
+    }
+
+    Float3& Float3::refract(const Float3& normal, float indexOfRefraction)
+    {
+        Float3 incident = *this;
+        float IdotN = incident.dot(normal);
+        float k = 1.0f - indexOfRefraction * indexOfRefraction * (1.0f - IdotN * IdotN);
+        if (k < 0.0f) *this = 0.0f;
+        else *this = indexOfRefraction * incident - (indexOfRefraction * IdotN + ni::sqrt(k)) * normal;
+        return *this;
+    }
+
+    Float4 Float3::toFloat4() { return Float4(x, y, z, 0.0f); }
+    Float3& Float3::operator*=(const Float3x3& m)
+    {
+        float tx = x * m.data[0] + y * m.data[3] + z * m.data[6];
+        float ty = x * m.data[1] + y * m.data[4] + z * m.data[7];
+        float tz = x * m.data[2] + y * m.data[5] + z * m.data[8];
+        x = tx;
+        y = ty;
+        z = tz;
+        return *this;
+    }
+
+    Float2 Float3::toFloat2() { return Float2(x, y); }
+
+    Float4::Float4() : x(0.0f), y(0.0f), z(0.0f), w(0.0f) {}
+
+    Float4::Float4(float x) : x(x), y(x), z(x), w(x) {}
+
+    Float4::Float4(float x, float y, float z, float w) : x(x), y(y), z(z), w(w) {}
+
+    float Float4::lengthSqr() const { return x * x + y * y + z * z + w * w; }
+
+    float Float4::length() const { return ni::sqrt(lengthSqr()); }
+
+    float Float4::dot(const Float4& n) const { return x * n.x + y * n.y + z * n.z + w * n.w; }
+
+    float Float4::distance(const Float4& n) const { return (*this - n).length(); }
+
+    Float4& Float4::normalize()
+    {
+        float len = length();
+        if (len != 0.0f)
+        {
+            x /= len;
+            y /= len;
+            z /= len;
+            w /= len;
+        }
+        return *this;
+    }
+
+    Float4& Float4::faceForward(const Float4& incident, const Float4& reference)
+    {
+        if (incident.dot(reference) >= 0.0f)
+        {
+            *this *= -1.0f;
+        }
+        return *this;
+    }
+
+    Float4& Float4::reflect(const Float4& normal)
+    {
+        *this -= 2.0f * dot(normal) * normal;
+        return *this;
+    }
+
+    Float4& Float4::refract(const Float4& normal, float indexOfRefraction)
+    {
+        Float4 incident = *this;
+        float IdotN = incident.dot(normal);
+        float k = 1.0f - indexOfRefraction * indexOfRefraction * (1.0f - IdotN * IdotN);
+        if (k < 0.0f) *this = 0.0f;
+        else *this = indexOfRefraction * incident - (indexOfRefraction * IdotN + ni::sqrt(k)) * normal;
+        return *this;
+    }
+
+    Float4& Float4::operator*=(const Float4x4& m)
+    {
+        float tx = x * m.data[0x0] + y * m.data[0x4] + z * m.data[0x8] + w * m.data[0xC];
+        float ty = x * m.data[0x1] + y * m.data[0x5] + z * m.data[0x9] + w * m.data[0xD];
+        float tz = x * m.data[0x2] + y * m.data[0x6] + z * m.data[0xA] + w * m.data[0xE];
+        float tw = x * m.data[0x3] + y * m.data[0x7] + z * m.data[0xB] + w * m.data[0xF];
+        x = tx;
+        y = ty;
+        z = tz;
+        w = tw;
+        return *this;
+    }
+
+    Float3 Float4::toFloat3() { return Float3(x, y, z); }
+
+    Float2 Float4::toFloat2() { return Float2(x, y); }
+
+    Float4x4::Float4x4()
+    {
+        data[0] = 1.0f; data[1] = 0.0f; data[2] = 0.0f; data[3] = 0.0f;
+        data[4] = 0.0f; data[5] = 1.0f; data[6] = 0.0f; data[7] = 0.0f;
+        data[8] = 0.0f; data[9] = 0.0f; data[10] = 1.0f; data[11] = 0.0f;
+        data[12] = 0.0f; data[13] = 0.0f; data[14] = 0.0f; data[15] = 1.0f;
+    }
+
+    Float4x4::Float4x4(float a, float b, float c, float d, float e, float f, float g, float h, float i, float j, float k, float l, float m, float n, float o, float p)
+    {
+        data[0] = a; data[1] = b; data[2] = c; data[3] = d;
+        data[4] = e; data[5] = f; data[6] = g; data[7] = h;
+        data[8] = i; data[9] = j; data[10] = k; data[11] = l;
+        data[12] = m; data[13] = n; data[14] = o; data[15] = p;
+    }
+
+    Float4x4& Float4x4::loadIdentity()
+    {
+        data[0] = 1.0f; data[1] = 0.0f; data[2] = 0.0f; data[3] = 0.0f;
+        data[4] = 0.0f; data[5] = 1.0f; data[6] = 0.0f; data[7] = 0.0f;
+        data[8] = 0.0f; data[9] = 0.0f; data[10] = 1.0f; data[11] = 0.0f;
+        data[12] = 0.0f; data[13] = 0.0f; data[14] = 0.0f; data[15] = 1.0f;
+        return *this;
+    }
+
+    Float4x4& Float4x4::transpose()
+    {
+        float m00 = data[0x0]; float m01 = data[0x1]; float m02 = data[0x2]; float m03 = data[0x3];
+        float m10 = data[0x4]; float m11 = data[0x5]; float m12 = data[0x6]; float m13 = data[0x7];
+        float m20 = data[0x8]; float m21 = data[0x9]; float m22 = data[0xA]; float m23 = data[0xB];
+        float m30 = data[0xC]; float m31 = data[0xD]; float m32 = data[0xE]; float m33 = data[0xF];
+
+        data[0x0] = m00; data[0x1] = m10; data[0x2] = m20; data[0x3] = m30;
+        data[0x4] = m01; data[0x5] = m11; data[0x6] = m21; data[0x7] = m31;
+        data[0x8] = m02; data[0x9] = m12; data[0xA] = m22; data[0xB] = m32;
+        data[0xC] = m03; data[0xD] = m13; data[0xE] = m23; data[0xF] = m33;
+        return *this;
+    }
+
+    Float4x4& Float4x4::translate(const Float3& v)
+    {
+        data[12] = data[0] * v.x + data[4] * v.y + data[8] * v.z + data[12];
+        data[13] = data[1] * v.x + data[5] * v.y + data[9] * v.z + data[13];
+        data[14] = data[2] * v.x + data[6] * v.y + data[10] * v.z + data[14];
+        data[15] = data[3] * v.x + data[7] * v.y + data[11] * v.z + data[15];
+        return *this;
+    }
+
+    Float4x4& Float4x4::scale(const Float3& v)
+    {
+        data[0] = data[0] * v.x;
+        data[1] = data[1] * v.x;
+        data[2] = data[2] * v.x;
+        data[3] = data[3] * v.x;
+        data[4] = data[4] * v.y;
+        data[5] = data[5] * v.y;
+        data[6] = data[6] * v.y;
+        data[7] = data[7] * v.y;
+        data[8] = data[8] * v.z;
+        data[9] = data[9] * v.z;
+        data[10] = data[10] * v.z;
+        data[11] = data[11] * v.z;
+        return *this;
+    }
+
+    Float4x4& Float4x4::rotate(const Float3& Euler)
+    {
+        float cb = ni::cos(Euler.x);
+        float sb = ni::sin(Euler.x);
+        float ch = ni::cos(Euler.y);
+        float sh = ni::sin(Euler.y);
+        float ca = ni::cos(Euler.z);
+        float sa = ni::sin(Euler.z);
+        const float RotationMatrix[] = {
+                ch * ca, sh * sb - ch * sa * cb, ch * sa * sb + sh * cb, 0,
+                sa, ca * cb, -ca * sb, 0,
+                -sh * ca, sh * sa * cb + ch * sb, -sh * sa * sb + ch * cb, 0,
+                0, 0, 0, 1
+        };
+
+        float m0 = RotationMatrix[0] * data[0] + RotationMatrix[1] * data[4] + RotationMatrix[2] * data[8] + RotationMatrix[3] * data[12];
+        float m1 = RotationMatrix[0] * data[1] + RotationMatrix[1] * data[5] + RotationMatrix[2] * data[9] + RotationMatrix[3] * data[13];
+        float m2 = RotationMatrix[0] * data[2] + RotationMatrix[1] * data[6] + RotationMatrix[2] * data[10] + RotationMatrix[3] * data[14];
+        float m3 = RotationMatrix[0] * data[3] + RotationMatrix[1] * data[7] + RotationMatrix[2] * data[11] + RotationMatrix[3] * data[15];
+        float m4 = RotationMatrix[4] * data[0] + RotationMatrix[5] * data[4] + RotationMatrix[6] * data[8] + RotationMatrix[7] * data[12];
+        float m5 = RotationMatrix[4] * data[1] + RotationMatrix[5] * data[5] + RotationMatrix[6] * data[9] + RotationMatrix[7] * data[13];
+        float m6 = RotationMatrix[4] * data[2] + RotationMatrix[5] * data[6] + RotationMatrix[6] * data[10] + RotationMatrix[7] * data[14];
+        float m7 = RotationMatrix[4] * data[3] + RotationMatrix[5] * data[7] + RotationMatrix[6] * data[11] + RotationMatrix[7] * data[15];
+        float m8 = RotationMatrix[8] * data[0] + RotationMatrix[9] * data[4] + RotationMatrix[10] * data[8] + RotationMatrix[11] * data[12];
+        float m9 = RotationMatrix[8] * data[1] + RotationMatrix[9] * data[5] + RotationMatrix[10] * data[9] + RotationMatrix[11] * data[13];
+        float m10 = RotationMatrix[8] * data[2] + RotationMatrix[9] * data[6] + RotationMatrix[10] * data[10] + RotationMatrix[11] * data[14];
+        float m11 = RotationMatrix[8] * data[3] + RotationMatrix[9] * data[7] + RotationMatrix[10] * data[11] + RotationMatrix[11] * data[15];
+        float m12 = RotationMatrix[12] * data[0] + RotationMatrix[13] * data[4] + RotationMatrix[14] * data[8] + RotationMatrix[15] * data[12];
+        float m13 = RotationMatrix[12] * data[1] + RotationMatrix[13] * data[5] + RotationMatrix[14] * data[9] + RotationMatrix[15] * data[13];
+        float m14 = RotationMatrix[12] * data[2] + RotationMatrix[13] * data[6] + RotationMatrix[14] * data[10] + RotationMatrix[15] * data[14];
+        float m15 = RotationMatrix[12] * data[3] + RotationMatrix[13] * data[7] + RotationMatrix[14] * data[11] + RotationMatrix[15] * data[15];
+
+        data[0] = m0;
+        data[1] = m1;
+        data[2] = m2;
+        data[3] = m3;
+        data[4] = m4;
+        data[5] = m5;
+        data[6] = m6;
+        data[7] = m7;
+        data[8] = m8;
+        data[9] = m9;
+        data[10] = m10;
+        data[11] = m11;
+        data[12] = m12;
+        data[13] = m13;
+        data[14] = m14;
+        data[15] = m15;
+
+        return *this;
+    }
+
+    Float4x4& Float4x4::rotateX(float rad)
+    {
+        float s = ni::sin(rad);
+        float c = ni::cos(rad);
+        float a10 = data[4];
+        float a11 = data[5];
+        float a12 = data[6];
+        float a13 = data[7];
+        float a20 = data[8];
+        float a21 = data[9];
+        float a22 = data[10];
+        float a23 = data[11];
+        data[4] = a10 * c + a20 * s;
+        data[5] = a11 * c + a21 * s;
+        data[6] = a12 * c + a22 * s;
+        data[7] = a13 * c + a23 * s;
+        data[8] = a20 * c - a10 * s;
+        data[9] = a21 * c - a11 * s;
+        data[10] = a22 * c - a12 * s;
+        data[11] = a23 * c - a13 * s;
+        return *this;
+    }
+
+    Float4x4& Float4x4::rotateY(float rad)
+    {
+        float s = ni::sin(rad);
+        float c = ni::cos(rad);
+        float a00 = data[0];
+        float a01 = data[1];
+        float a02 = data[2];
+        float a03 = data[3];
+        float a20 = data[8];
+        float a21 = data[9];
+        float a22 = data[10];
+        float a23 = data[11];
+
+        data[0] = a00 * c - a20 * s;
+        data[1] = a01 * c - a21 * s;
+        data[2] = a02 * c - a22 * s;
+        data[3] = a03 * c - a23 * s;
+        data[8] = a00 * s + a20 * c;
+        data[9] = a01 * s + a21 * c;
+        data[10] = a02 * s + a22 * c;
+        data[11] = a03 * s + a23 * c;
+        return *this;
+    }
+
+    Float4x4& Float4x4::rotateZ(float rad)
+    {
+        float s = ni::sin(rad);
+        float c = ni::cos(rad);
+        float a00 = data[0];
+        float a01 = data[1];
+        float a02 = data[2];
+        float a03 = data[3];
+        float a10 = data[4];
+        float a11 = data[5];
+        float a12 = data[6];
+        float a13 = data[7];
+
+        data[0] = a00 * c + a10 * s;
+        data[1] = a01 * c + a11 * s;
+        data[2] = a02 * c + a12 * s;
+        data[3] = a03 * c + a13 * s;
+        data[4] = a10 * c - a00 * s;
+        data[5] = a11 * c - a01 * s;
+        data[6] = a12 * c - a02 * s;
+        data[7] = a13 * c - a03 * s;
+        return *this;
+    }
+
+    Float4x4& Float4x4::perspective(float fovy, float aspect, float nearBound, float farBound)
+    {
+        float f = 1.0f / ni::tan(fovy / 2.0f);
+        data[0] = f / aspect;
+        data[1] = 0;
+        data[2] = 0;
+        data[3] = 0;
+        data[4] = 0;
+        data[5] = f;
+        data[6] = 0;
+        data[7] = 0;
+        data[8] = 0;
+        data[9] = 0;
+        data[11] = -1;
+        data[12] = 0;
+        data[13] = 0;
+        data[15] = 0;
+        float nf = 1 / (nearBound - farBound);
+        data[10] = (farBound + nearBound) * nf;
+        data[14] = (2 * farBound * nearBound) * nf;
+        return *this;
+    }
+
+    Float4x4& Float4x4::orthographic(float left, float right, float bottom, float top, float nearBound, float farBound)
+    {
+        float lr = 1 / (left - right);
+        float bt = 1 / (bottom - top);
+        float nf = 1 / (nearBound - farBound);
+        data[0] = -2 * lr;
+        data[1] = 0;
+        data[2] = 0;
+        data[3] = 0;
+        data[4] = 0;
+        data[5] = -2 * bt;
+        data[6] = 0;
+        data[7] = 0;
+        data[8] = 0;
+        data[9] = 0;
+        data[10] = 2 * nf;
+        data[11] = 0;
+        data[12] = (left + right) * lr;
+        data[13] = (top + bottom) * bt;
+        data[14] = (nearBound + farBound) * nf;
+        data[15] = 1;
+        return *this;
+    }
+
+    Float4x4& Float4x4::lookAt(const Float3& eye, const Float3& center, const Float3& up)
+    {
+        const float E = 0.000001f;
+        float x0, x1, x2, y0, y1, y2, z0, z1, z2, len;
+        float eyex = eye.x;
+        float eyey = eye.y;
+        float eyez = eye.z;
+        float upx = up.x;
+        float upy = up.y;
+        float upz = up.z;
+        float centerx = center.x;
+        float centery = center.y;
+        float centerz = center.z;
+        if (ni::abs(eyex - centerx) < E &&
+            ni::abs(eyey - centery) < E &&
+            ni::abs(eyez - centerz) < E)
+        {
+            loadIdentity();
+            return *this;
+        }
+        z0 = eyex - centerx;
+        z1 = eyey - centery;
+        z2 = eyez - centerz;
+        len = 1.0f / ni::sqrt(z0 * z0 + z1 * z1 + z2 * z2);
+        z0 *= len;
+        z1 *= len;
+        z2 *= len;
+        x0 = upy * z2 - upz * z1;
+        x1 = upz * z0 - upx * z2;
+        x2 = upx * z1 - upy * z0;
+        len = ni::sqrt(x0 * x0 + x1 * x1 + x2 * x2);
+        if (!len)
+        {
+            x0 = 0.0f;
+            x1 = 0.0f;
+            x2 = 0.0f;
+        }
+        else
+        {
+            len = 1.0f / len;
+            x0 *= len;
+            x1 *= len;
+            x2 *= len;
+        }
+        y0 = z1 * x2 - z2 * x1;
+        y1 = z2 * x0 - z0 * x2;
+        y2 = z0 * x1 - z1 * x0;
+        len = ni::sqrt(y0 * y0 + y1 * y1 + y2 * y2);
+        if (!len)
+        {
+            y0 = 0.0f;
+            y1 = 0.0f;
+            y2 = 0.0f;
+        }
+        else
+        {
+            len = 1.0f / len;
+            y0 *= len;
+            y1 *= len;
+            y2 *= len;
+        }
+        data[0] = x0;
+        data[1] = y0;
+        data[2] = z0;
+        data[3] = 0.0f;
+        data[4] = x1;
+        data[5] = y1;
+        data[6] = z1;
+        data[7] = 0.0f;
+        data[8] = x2;
+        data[9] = y2;
+        data[10] = z2;
+        data[11] = 0.0f;
+        data[12] = -(x0 * eyex + x1 * eyey + x2 * eyez);
+        data[13] = -(y0 * eyex + y1 * eyey + y2 * eyez);
+        data[14] = -(z0 * eyex + z1 * eyey + z2 * eyez);
+        data[15] = 1;
+        return *this;
+    }
+
+    Float4x4& Float4x4::invert()
+    {
+        float d0 = data[0] * data[5] - data[1] * data[4];
+        float d1 = data[0] * data[6] - data[2] * data[4];
+        float d2 = data[0] * data[7] - data[3] * data[4];
+        float d3 = data[1] * data[6] - data[2] * data[5];
+        float d4 = data[1] * data[7] - data[3] * data[5];
+        float d5 = data[2] * data[7] - data[3] * data[6];
+        float d6 = data[8] * data[13] - data[9] * data[12];
+        float d7 = data[8] * data[14] - data[10] * data[12];
+        float d8 = data[8] * data[15] - data[11] * data[12];
+        float d9 = data[9] * data[14] - data[10] * data[13];
+        float d10 = data[9] * data[15] - data[11] * data[13];
+        float d11 = data[10] * data[15] - data[11] * data[14];
+        float determinant = d0 * d11 - d1 * d10 + d2 * d9 + d3 * d8 - d4 * d7 + d5 * d6;
+
+        if (determinant == 0.0f) return *this;
+
+        determinant = 1.0f / determinant;
+        float m00 = (data[5] * d11 - data[6] * d10 + data[7] * d9) * determinant;
+        float m01 = (data[2] * d10 - data[1] * d11 - data[3] * d9) * determinant;
+        float m02 = (data[13] * d5 - data[14] * d4 + data[15] * d3) * determinant;
+        float m03 = (data[10] * d4 - data[9] * d5 - data[11] * d3) * determinant;
+        float m04 = (data[6] * d8 - data[4] * d11 - data[7] * d7) * determinant;
+        float m05 = (data[0] * d11 - data[2] * d8 + data[3] * d7) * determinant;
+        float m06 = (data[14] * d2 - data[12] * d5 - data[15] * d1) * determinant;
+        float m07 = (data[8] * d5 - data[10] * d2 + data[11] * d1) * determinant;
+        float m08 = (data[4] * d10 - data[5] * d8 + data[7] * d6) * determinant;
+        float m09 = (data[1] * d8 - data[0] * d10 - data[3] * d6) * determinant;
+        float m10 = (data[12] * d4 - data[13] * d2 + data[15] * d0) * determinant;
+        float m11 = (data[9] * d2 - data[8] * d4 - data[11] * d0) * determinant;
+        float m12 = (data[5] * d7 - data[4] * d9 - data[6] * d6) * determinant;
+        float m13 = (data[0] * d9 - data[1] * d7 + data[2] * d6) * determinant;
+        float m14 = (data[13] * d1 - data[12] * d3 - data[14] * d0) * determinant;
+        float m15 = (data[8] * d3 - data[9] * d1 + data[10] * d0) * determinant;
+
+        data[0] = m00;
+        data[1] = m01;
+        data[2] = m02;
+        data[3] = m03;
+        data[4] = m04;
+        data[5] = m05;
+        data[6] = m06;
+        data[7] = m07;
+        data[8] = m08;
+        data[9] = m09;
+        data[10] = m10;
+        data[11] = m11;
+        data[12] = m12;
+        data[13] = m13;
+        data[14] = m14;
+        data[15] = m15;
+
+        return *this;
+    }
+
+    Quaternion::Quaternion() : x(0.0f), y(0.0f), z(0.0f), w(1.0f) {}
+
+    Quaternion::Quaternion(float x) : x(x), y(x), z(x), w(x) {}
+
+    Quaternion::Quaternion(float x, float y, float z, float w) : x(x), y(y), z(z), w(w) {}
+
+    Quaternion& Quaternion::loadIdentity() { x = 0.0f; y = 0.0f; z = 0.0f; w = 1.0f; return *this; }
+
+    Quaternion& Quaternion::fromEulerAngles(const Float3& eulerAngles)
+    {
+        float roll = eulerAngles.x;
+        float pitch = eulerAngles.y;
+        float yaw = eulerAngles.z;
+        float cy = ni::cos(yaw * 0.5f);
+        float sy = ni::sin(yaw * 0.5f);
+        float cp = ni::cos(pitch * 0.5f);
+        float sp = ni::sin(pitch * 0.5f);
+        float cr = ni::cos(roll * 0.5f);
+        float sr = ni::sin(roll * 0.5f);
+
+        w = cy * cp * cr + sy * sp * sr;
+        x = cy * cp * sr + sy * sp * cr;
+        y = sy * cp * sr + cy * sp * cr;
+        z = sy * cp * cr + cy * sp * sr;
+
+        return *this;
+    }
+
+    Float3 Quaternion::toEulerAngles()
+    {
+        float roll, pitch, yaw;
+        float a = 2.0f * (w * x + y * z);
+        float b = 1.0f - 2.0f * (x * x + y * y);
+
+        roll = ni::atan2(a, b);
+
+        float c = 2.0f * (w * y * z * x);
+        if (ni::abs(c) >= 1.0f)
+            pitch = copysignf(ni::PI / 2.0f, c);
+        else
+            pitch = ni::asin(c);
+
+        float d = 2.0f * (w * z + x * y);
+        float e = 1.0f - 2.0f * (y * y + z * z);
+        yaw = ni::atan2(d, e);
+
+        return Float3(roll, pitch, yaw);
+    }
+
+    Quaternion& Quaternion::rotateX(float rad)
+    {
+        float c = ni::cos(rad);
+        float s = ni::sin(rad);
+        float tx = x * s + w * c;
+        float ty = y * s + z * c;
+        float tz = z * s - y * c;
+        float tw = w * s - x * c;
+        x = tx;
+        y = ty;
+        z = tz;
+        w = tw;
+        return *this;
+    }
+
+    Quaternion& Quaternion::rotateY(float rad)
+    {
+        float c = ni::cos(rad);
+        float s = ni::sin(rad);
+        float tx = x * s - z * c;
+        float ty = y * s + w * c;
+        float tz = z * s + x * c;
+        float tw = w * s - y * c;
+        x = tx;
+        y = ty;
+        z = tz;
+        w = tw;
+        return *this;
+    }
+
+    Quaternion& Quaternion::rotateZ(float rad)
+    {
+        float c = ni::cos(rad);
+        float s = ni::sin(rad);
+        float tx = x * s + y * c;
+        float ty = y * s - x * c;
+        float tz = z * s + w * c;
+        float tw = w * s - z * c;
+        x = tx;
+        y = ty;
+        z = tz;
+        w = tw;
+        return *this;
+    }
+
+    Float4x4 Quaternion::toFloat4x4()
+    {
+        float x2 = x + x;
+        float y2 = y + y;
+        float z2 = z + z;
+        float xx = x * x2;
+        float yx = y * x2;
+        float yy = y * y2;
+        float zx = z * x2;
+        float zy = z * y2;
+        float zz = z * z2;
+        float wx = w * x2;
+        float wy = w * y2;
+        float wz = w * z2;
+
+        return Float4x4(
+            1.0f - yy - zz,
+            yx + wz,
+            zx - wy,
+            0.0f,
+            yx - wz,
+            1.0f - xx - zz,
+            zy + wx,
+            0.0f,
+            zx + wy,
+            zy - wx,
+            1.0f - xx - yy,
+            0.0f,
+            0.0f,
+            0.0f,
+            0.0f,
+            1.0f
+        );
+    }
+
+    Float3x3::Float3x3()
+    {
+        data[0] = 1.0f; data[1] = 0.0f; data[2] = 0.0f;
+        data[3] = 0.0f; data[4] = 1.0f; data[5] = 0.0f;
+        data[6] = 0.0f; data[7] = 0.0f; data[8] = 1.0f;
+    }
+
+    Float3x3::Float3x3(float a, float b, float c, float d, float e, float f, float g, float h, float i)
+    {
+        data[0] = a; data[1] = b; data[2] = c;
+        data[3] = d; data[4] = e; data[5] = f;
+        data[6] = g; data[7] = h; data[8] = i;
+    }
+
+    Float3x3& Float3x3::loadIdentity()
+    {
+        data[0] = 1.0f; data[1] = 0.0f; data[2] = 0.0f;
+        data[3] = 0.0f; data[4] = 1.0f; data[5] = 0.0f;
+        data[6] = 0.0f; data[7] = 0.0f; data[8] = 1.0f;
+        return *this;
+    }
+
+    Float3x3& Float3x3::transpose()
+    {
+        float m1 = data[1];
+        float m2 = data[2];
+        float m5 = data[5];
+        data[1] = data[3];
+        data[2] = data[6];
+        data[3] = m1;
+        data[5] = data[7];
+        data[6] = m2;
+        data[7] = m5;
+        return *this;
+    }
+
+    Float3x3& Float3x3::translate(const Float3& n)
+    {
+        data[6] = n.x * data[0] + data[3];
+        data[7] = n.x * data[0] + data[3];
+        data[8] = n.x * data[0] + data[3];
+        return *this;
+    }
+
+    Float3x3& Float3x3::rotate(float rad)
+    {
+        float c = ni::cos(rad);
+        float s = ni::sin(rad);
+        float a00 = data[0]; float a01 = data[1]; float a02 = data[2];
+        float a10 = data[3]; float a11 = data[4]; float a12 = data[5];
+        data[0] = c * a00 + s * a10;
+        data[1] = c * a01 + s * a11;
+        data[2] = c * a02 + s * a12;
+        data[3] = -s * a00 + c * a10;
+        data[4] = -s * a01 + c * a11;
+        data[5] = -s * a02 + c * a12;
+        return *this;
+    }
+
+    Float3x3& Float3x3::scale(const Float2& n)
+    {
+        data[0] = n.x * data[0];
+        data[1] = n.x * data[1];
+        data[2] = n.x * data[2];
+        data[3] = n.y * data[3];
+        data[4] = n.y * data[4];
+        data[5] = n.y * data[5];
+        return *this;
+    }
+
+    Float2x2::Float2x2()
+    {
+        data[0] = 1.0f; data[1] = 0.0f;
+        data[2] = 0.0f; data[3] = 1.0f;
+    }
+
+    Float2x2::Float2x2(float a, float b, float c, float d)
+    {
+        data[0] = a; data[1] = b;
+        data[2] = c; data[3] = d;
+    }
+
+    Float2x2& Float2x2::loadIdentity()
+    {
+        data[0] = 1.0f; data[1] = 0.0f;
+        data[2] = 0.0f; data[3] = 1.0f;
+        return *this;
+    }
+
+    Float2x2& Float2x2::transpose()
+    {
+        float m = data[1];
+        data[1] = data[2];
+        data[2] = m;
+        return *this;
+    }
+
+    Float2x2& Float2x2::rotate(float rad)
+    {
+        float c = ni::cos(rad);
+        float s = ni::sin(rad);
+        float m00 = data[0]; float m01 = data[1];
+        float m10 = data[2]; float m11 = data[3];
+
+        data[0] = m00 * c + m10 * s;
+        data[1] = m01 * c + m11 * s;
+        data[2] = m00 * -s + m10 * c;
+        data[3] = m01 * -s + m11 * c;
+
+        return *this;
+    }
+
+    Float2x2& Float2x2::scale(const Float2& v)
+    {
+        data[0] = v.x * data[0];
+        data[1] = v.x * data[1];
+        data[2] = v.y * data[2];
+        data[3] = v.y * data[3];
+        return *this;
+    }
+
+    Matrix2D::Matrix2D()
+    {
+        loadIdentity();
+    }
+
+    Matrix2D::Matrix2D(const Matrix2D& Other)
+    {
+        ab = Other.ab;
+        cd = Other.cd;
+        txty = Other.txty;
+    }
+
+    Matrix2D::Matrix2D(float a, float b, float c, float d, float tx, float ty) :
+        a(a), b(b), c(c), d(d), tx(tx), ty(ty)
+    {
+    }
+
+    Matrix2D& Matrix2D::operator=(const Matrix2D& Other)
+    {
+        ab = Other.ab;
+        cd = Other.cd;
+        txty = Other.txty;
+        return *this;
+    }
+
+    Matrix2D& Matrix2D::loadIdentity()
+    {
+        a = 1.0f;
+        b = 0.0f;
+        c = 0.0f;
+        d = 1.0f;
+        tx = 0.0f;
+        ty = 0.0f;
+        return *this;
+    }
+
+    Matrix2D& Matrix2D::translate(float x, float y)
+    {
+        float ttx = a * x + c * y + tx;
+        float tty = b * x + d * y + ty;
+        tx = ttx;
+        ty = tty;
+        return *this;
+    }
+
+    Matrix2D& Matrix2D::translate(Float2& TranslateVector)
+    {
+        return translate(TranslateVector.x, TranslateVector.y);
+    }
+
+    Matrix2D& Matrix2D::scale(float x, float y)
+    {
+        a = a * x;
+        b = b * x;
+        c = c * y;
+        d = d * y;
+        return *this;
+    }
+
+    Matrix2D& Matrix2D::scale(Float2& ScaleVector)
+    {
+        return scale(ScaleVector.x, ScaleVector.y);
+    }
+
+    Matrix2D& Matrix2D::rotate(float Rotation)
+    {
+        float cr = ni::cos(Rotation);
+        float sr = ni::sin(Rotation);
+        float m0 = cr * a + sr * c;
+        float m1 = cr * b + sr * d;
+        float m2 = -sr * a + cr * c;
+        float m3 = -sr * b + cr * d;
+        a = m0;
+        b = m1;
+        c = m2;
+        d = m3;
+        return *this;
+    }
+}
+
+ni::Float2 operator+(const ni::Float2& a, const ni::Float2& b)
+{
+    ni::Float2 c = a;
+    c += b;
+    return c;
+}
+
+ni::Float2 operator-(const ni::Float2& a, const ni::Float2& b)
+{
+    ni::Float2 c = a;
+    c -= b;
+    return c;
+}
+
+ni::Float2 operator*(const ni::Float2& a, const ni::Float2& b)
+{
+    ni::Float2 c = a;
+    c *= b;
+    return c;
+}
+
+ni::Float2 operator/(const ni::Float2& a, const ni::Float2& b)
+{
+    ni::Float2 c = a;
+    c /= b;
+    return c;
+}
+
+ni::Float2 operator*(const ni::Float2x2& a, const ni::Float2& b)
+{
+    ni::Float2 c = b;
+    c *= a;
+    return c;
+}
+
+ni::Float2 operator+(const ni::Float2& a, const float& b)
+{
+    ni::Float2 c = a;
+    c += b;
+    return c;
+}
+
+ni::Float2 operator-(const ni::Float2& a, const float& b)
+{
+    ni::Float2 c = a;
+    c -= b;
+    return c;
+}
+
+ni::Float2 operator*(const ni::Float2& a, const float& b)
+{
+    ni::Float2 c = a;
+    c *= b;
+    return c;
+}
+
+ni::Float2 operator/(const ni::Float2& a, const float& b)
+{
+    ni::Float2 c = a;
+    c /= b;
+    return c;
+}
+
+ni::Float2 operator+(const float& a, const ni::Float2& b)
+{
+    ni::Float2 c = b;
+    c += a;
+    return c;
+}
+
+ni::Float2 operator-(const float& a, const ni::Float2& b)
+{
+    ni::Float2 c = b;
+    c -= a;
+    return c;
+}
+
+ni::Float2 operator*(const float& a, const ni::Float2& b)
+{
+    ni::Float2 c = b;
+    c *= a;
+    return c;
+}
+
+ni::Float2 operator/(const float& a, const ni::Float2& b)
+{
+    ni::Float2 c = b;
+    c /= a;
+    return c;
+}
+
+ni::Float2 operator-(const ni::Float2& a)
+{
+    return ni::Float2(-a.x, -a.y);
+}
+
+ni::Float2 operator*(const ni::Matrix2D& a, const ni::Float2& b)
+{
+    float x = b.x * a.a + b.y * a.c + a.tx;
+    float y = b.x * a.b + b.y * a.d + a.ty;
+    return ni::Float2(x, y);
+}
+
+// Vector3
+ni::Float3 operator+(const ni::Float3& a, const ni::Float3& b)
+{
+    ni::Float3 c = a;
+    c += b;
+    return c;
+}
+
+ni::Float3 operator-(const ni::Float3& a, const ni::Float3& b)
+{
+    ni::Float3 c = a;
+    c -= b;
+    return c;
+}
+
+ni::Float3 operator*(const ni::Float3& a, const ni::Float3& b)
+{
+    ni::Float3 c = a;
+    c *= b;
+    return c;
+}
+
+ni::Float3 operator/(const ni::Float3& a, const ni::Float3& b)
+{
+    ni::Float3 c = a;
+    c /= b;
+    return c;
+}
+
+ni::Float3 operator*(const ni::Float3x3& a, const ni::Float3& b)
+{
+    ni::Float3 c = b;
+    c *= a;
+    return c;
+}
+
+ni::Float3 operator+(const ni::Float3& a, const float& b)
+{
+    ni::Float3 c = a;
+    c += b;
+    return c;
+}
+
+ni::Float3 operator-(const ni::Float3& a, const float& b)
+{
+    ni::Float3 c = a;
+    c -= b;
+    return c;
+}
+
+ni::Float3 operator*(const ni::Float3& a, const float& b)
+{
+    ni::Float3 c = a;
+    c *= b;
+    return c;
+}
+
+ni::Float3 operator/(const ni::Float3& a, const float& b)
+{
+    ni::Float3 c = a;
+    c /= b;
+    return c;
+}
+
+ni::Float3 operator+(const float& a, const ni::Float3& b)
+{
+    ni::Float3 c = b;
+    c += a;
+    return c;
+}
+
+ni::Float3 operator-(const float& a, const ni::Float3& b)
+{
+    ni::Float3 c = b;
+    c -= a;
+    return c;
+}
+
+ni::Float3 operator*(const float& a, const ni::Float3& b)
+{
+    ni::Float3 c = b;
+    c *= a;
+    return c;
+}
+
+ni::Float3 operator/(const float& a, const ni::Float3& b)
+{
+    ni::Float3 c = b;
+    c /= a;
+    return c;
+}
+
+ni::Float3 operator-(const ni::Float3& a)
+{
+    return ni::Float3(-a.x, -a.y, -a.z);
+}
+
+// Vector4
+ni::Float4 operator+(const ni::Float4& a, const ni::Float4& b)
+{
+    ni::Float4 c = a;
+    c += b;
+    return c;
+}
+
+ni::Float4 operator-(const ni::Float4& a, const ni::Float4& b)
+{
+    ni::Float4 c = a;
+    c -= b;
+    return c;
+}
+
+ni::Float4 operator*(const ni::Float4& a, const ni::Float4& b)
+{
+    ni::Float4 c = a;
+    c *= b;
+    return c;
+}
+
+ni::Float4 operator/(const ni::Float4& a, const ni::Float4& b)
+{
+    ni::Float4 c = a;
+    c /= b;
+    return c;
+}
+
+ni::Float4 operator*(const ni::Float4x4& a, const ni::Float4& b)
+{
+    ni::Float4 c = b;
+    c *= a;
+    return c;
+}
+
+ni::Float4 operator+(const ni::Float4& a, const float& b)
+{
+    ni::Float4 c = a;
+    c += b;
+    return c;
+}
+
+ni::Float4 operator-(const ni::Float4& a, const float& b)
+{
+    ni::Float4 c = a;
+    c -= b;
+    return c;
+}
+
+ni::Float4 operator*(const ni::Float4& a, const float& b)
+{
+    ni::Float4 c = a;
+    c *= b;
+    return c;
+}
+
+ni::Float4 operator/(const ni::Float4& a, const float& b)
+{
+    ni::Float4 c = a;
+    c /= b;
+    return c;
+}
+
+ni::Float4 operator+(const float& a, const ni::Float4& b)
+{
+    ni::Float4 c = b;
+    c += a;
+    return c;
+}
+
+ni::Float4 operator-(const float& a, const ni::Float4& b)
+{
+    ni::Float4 c = b;
+    c -= a;
+    return c;
+}
+
+ni::Float4 operator*(const float& a, const ni::Float4& b)
+{
+    ni::Float4 c = b;
+    c *= a;
+    return c;
+}
+
+ni::Float4 operator/(const float& a, const ni::Float4& b)
+{
+    ni::Float4 c = b;
+    c /= a;
+    return c;
+}
+
+ni::Float4 operator-(const ni::Float4& a)
+{
+    return ni::Float4(-a.x, -a.y, -a.z, -a.w);
+}
+
+ni::Float2x2 operator*(const ni::Float2x2& a, const ni::Float2x2& b)
+{
+    ni::Float2x2 c = a;
+    c *= b;
+    return c;
+}
+
+ni::Float3x3 operator*(const ni::Float3x3& a, const ni::Float3x3& b)
+{
+    ni::Float3x3 c = a;
+    c *= b;
+    return c;
+}
+
+ni::Float4x4 operator*(const ni::Float4x4& a, const ni::Float4x4& b)
+{
+    ni::Float4x4 c = a;
+    c *= b;
+    return c;
+}
+

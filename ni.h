@@ -3,6 +3,7 @@
 #include <stdint.h>
 #include <d3d12.h>
 #include <dxgi1_6.h>
+#include <math.h>
 
 ///////////////////////////////////////////////////////////////
 // CONFIG 
@@ -407,4 +408,499 @@ namespace ni {
 	size_t getFileSize(const char* path);
 	bool readFile(const char* path, void* outBuffer);
 	void* allocReadFile(const char* path);
+}
+
+#ifdef min
+#undef min
+#endif
+#ifdef max
+#undef max
+#endif
+
+namespace ni {
+	struct Float2;
+	struct Float3;
+	struct Float4;
+	struct Float2x2;
+	struct Float3x3;
+	struct Float4x4;
+	struct Quaternion;
+	struct Matrix2D;
+}
+
+// Global operators
+ni::Float2x2 operator*(const ni::Float2x2& a, const ni::Float2x2& b);
+ni::Float3x3 operator*(const ni::Float3x3& a, const ni::Float3x3& b);
+ni::Float4x4 operator*(const ni::Float4x4& a, const ni::Float4x4& b);
+
+ni::Float2 operator+(const ni::Float2& a, const ni::Float2& b);
+ni::Float2 operator-(const ni::Float2& a, const ni::Float2& b);
+ni::Float2 operator*(const ni::Float2& a, const ni::Float2& b);
+ni::Float2 operator/(const ni::Float2& a, const ni::Float2& b);
+ni::Float2 operator*(const ni::Float2x2& a, const ni::Float2& b);
+ni::Float2 operator*(const ni::Float2x2& a, const ni::Float2& b);
+ni::Float2 operator+(const ni::Float2& a, const float& b);
+ni::Float2 operator-(const ni::Float2& a, const float& b);
+ni::Float2 operator*(const ni::Float2& a, const float& b);
+ni::Float2 operator/(const ni::Float2& a, const float& b);
+ni::Float2 operator+(const float& a, const ni::Float2& b);
+ni::Float2 operator-(const float& a, const ni::Float2& b);
+ni::Float2 operator*(const float& a, const ni::Float2& b);
+ni::Float2 operator/(const float& a, const ni::Float2& b);
+ni::Float2 operator-(const ni::Float2& a);
+ni::Float2 operator*(const ni::Matrix2D& a, const ni::Float2& b);
+
+ni::Float3 operator+(const ni::Float3& a, const ni::Float3& b);
+ni::Float3 operator-(const ni::Float3& a, const ni::Float3& b);
+ni::Float3 operator*(const ni::Float3& a, const ni::Float3& b);
+ni::Float3 operator/(const ni::Float3& a, const ni::Float3& b);
+ni::Float3 operator*(const ni::Float3x3& a, const ni::Float3& b);
+ni::Float3 operator+(const ni::Float3& a, const float& b);
+ni::Float3 operator-(const ni::Float3& a, const float& b);
+ni::Float3 operator*(const ni::Float3& a, const float& b);
+ni::Float3 operator/(const ni::Float3& a, const float& b);
+ni::Float3 operator+(const float& a, const ni::Float3& b);
+ni::Float3 operator-(const float& a, const ni::Float3& b);
+ni::Float3 operator*(const float& a, const ni::Float3& b);
+ni::Float3 operator/(const float& a, const ni::Float3& b);
+ni::Float3 operator-(const ni::Float3& a);
+
+ni::Float4 operator+(const ni::Float4& a, const ni::Float4& b);
+ni::Float4 operator-(const ni::Float4& a, const ni::Float4& b);
+ni::Float4 operator*(const ni::Float4& a, const ni::Float4& b);
+ni::Float4 operator/(const ni::Float4& a, const ni::Float4& b);
+ni::Float4 operator*(const ni::Float4x4& a, const ni::Float4& b);
+ni::Float4 operator+(const ni::Float4& a, const float& b);
+ni::Float4 operator-(const ni::Float4& a, const float& b);
+ni::Float4 operator*(const ni::Float4& a, const float& b);
+ni::Float4 operator/(const ni::Float4& a, const float& b);
+ni::Float4 operator+(const float& a, const ni::Float4& b);
+ni::Float4 operator-(const float& a, const ni::Float4& b);
+ni::Float4 operator*(const float& a, const ni::Float4& b);
+ni::Float4 operator/(const float& a, const ni::Float4& b);
+ni::Float4 operator-(const ni::Float4& a);
+
+namespace ni {
+
+	constexpr float PI = 3.14159265359f;
+	constexpr float TAU = PI * 2.0f;
+
+	float toRad(float d);
+	float toDeg(float r);
+	float cos(float t);
+	float sin(float t);
+	float tan(float t);
+	float asin(float t);
+	float acos(float t);
+	float atan(float t);
+	float atan2(float y, float x);
+	float pow(float x, float y);
+	float exp(float x);
+	float exp2(float x);
+	float log(float x);
+	float log2(float x);
+	float sqrt(float x);
+	float invSqrt(float x);
+	float abs(float x);
+	float round(float x);
+	float sign(float x);
+	float floor(float x);
+	float ceil(float x);
+	float fract(float x);
+	float mod(float x, float y);
+	float clamp(float n, float x, float y);
+	float mix(float x, float y, float n);
+	float step(float edge, float x);
+	float smootStep(float edge0, float edge1, float x);
+	float saturate(float Value);
+	float normalize(float Value, float MinValue, float MaxValue);
+	float random();
+
+	template<typename T>
+	static T min(T Lhs, T Rhs)
+	{
+		return Lhs < Rhs ? Lhs : Rhs;
+	}
+
+	template<typename T>
+	static T max(T Lhs, T Rhs)
+	{
+		return Lhs > Rhs ? Lhs : Rhs;
+	}
+
+
+	struct Float2
+	{
+		union
+		{
+			struct { float x, y; };
+			float components[2];
+		};
+
+		Float2();
+		Float2(float x);
+		Float2(float x, float y);
+		Float2& operator=(const float& n) { x = n; y = n; return *this; }
+		Float2& operator=(const Float2& n) { x = n.x; y = n.y; return *this; }
+		bool operator==(const Float2& n) const { return x == n.x && y == n.y; }
+		Float2& operator+=(const float& n) { x += n; y += n; return *this; }
+		Float2& operator-=(const float& n) { x -= n; y -= n; return *this; }
+		Float2& operator*=(const float& n) { x *= n; y *= n; return *this; }
+		Float2& operator/=(const float& n) { x /= n; y /= n; return *this; }
+		Float2& operator+=(const Float2& n) { x += n.x; y += n.y; return *this; }
+		Float2& operator-=(const Float2& n) { x -= n.x; y -= n.y; return *this; }
+		Float2& operator*=(const Float2& n) { x *= n.x; y *= n.y; return *this; }
+		Float2& operator/=(const Float2& n) { x /= n.x; y /= n.y; return *this; }
+		float& operator[](uint64_t Index) { return components[Index]; }
+		float lengthSqr() const { return x * x + y * y; }
+		float length() const { return ni::sqrt(lengthSqr()); }
+		float dot(const Float2& n) const { return x * n.x + y * n.y; }
+		float distance(const Float2& n) const { return (*this - n).length(); }
+		Float2& normalize();
+		Float2& faceForward(const Float2& Incident, const Float2& Reference);
+		Float2& reflect(const Float2& Normal);
+		Float2& refract(const Float2& Normal, float IndexOfRefraction);
+		Float2& operator*=(const Float2x2& m);
+		Float3 toFloat3();
+		Float4 toFloat4();
+	};
+
+	struct Float3
+	{
+		union
+		{
+			struct { float x, y, z; };
+			float components[3];
+		};
+
+		Float3();
+		Float3(float x);
+		Float3(float x, float y, float z);
+		Float3& operator=(const float& n) { x = n; y = n; z = n; return *this; }
+		Float3& operator=(const Float3& n) { x = n.x; y = n.y; z = n.z; return *this; }
+		bool operator==(const Float3& n) const { return x == n.x && y == n.y && z == n.z; }
+		Float3& operator+=(const float& n) { x += n; y += n; z += n; return *this; }
+		Float3& operator-=(const float& n) { x -= n; y -= n; z -= n; return *this; }
+		Float3& operator*=(const float& n) { x *= n; y *= n; z *= n; return *this; }
+		Float3& operator/=(const float& n) { x /= n; y /= n; z /= n; return *this; }
+		Float3& operator+=(const Float3& n) { x += n.x; y += n.y; z += n.z; return *this; }
+		Float3& operator-=(const Float3& n) { x -= n.x; y -= n.y; z -= n.z; return *this; }
+		Float3& operator*=(const Float3& n) { x *= n.x; y *= n.y; z *= n.z; return *this; }
+		Float3& operator/=(const Float3& n) { x /= n.x; y /= n.y; z /= n.z; return *this; }
+		float& operator[](uint64_t Index) { return components[Index]; }
+		float lengthSqr() const;
+		float length() const;
+		float dot(const Float3& n) const;
+		float distance(const Float3& n) const;
+		Float3& normalize();
+		Float3& cross(const Float3& n);
+		Float3& faceForward(const Float3& Incident, const Float3& Reference);
+		Float3& reflect(const Float3& Normal);
+		Float3& refract(const Float3& Normal, float IndexOfRefraction);
+		Float3& operator*=(const Float3x3& m);
+		Float4 toFloat4();
+		Float2 toFloat2();
+	};
+
+	struct Float4
+	{
+		union
+		{
+			struct { float x, y, z, w; };
+			float components[4];
+		};
+
+		Float4();
+		Float4(float x);
+		Float4(float x, float y, float z, float w);
+		Float4& operator=(const float& n) { x = n; y = n; z = n; w = n; return *this; }
+		Float4& operator=(const Float2& n) { x = n.x; y = n.y; return *this; }
+		bool operator==(const Float4& n) const { return x == n.x && y == n.y && z == n.z && w == n.w; }
+		Float4& operator+=(const float& n) { x += n; y += n; z += n; w += n; return *this; }
+		Float4& operator-=(const float& n) { x -= n; y -= n; z -= n; w -= n; return *this; }
+		Float4& operator*=(const float& n) { x *= n; y *= n; z *= n; w *= n; return *this; }
+		Float4& operator/=(const float& n) { x /= n; y /= n; z /= n; w /= n; return *this; }
+		Float4& operator+=(const Float4& n) { x += n.x; y += n.y; z += n.z; w += n.w; return *this; }
+		Float4& operator-=(const Float4& n) { x -= n.x; y -= n.y; z -= n.z; w -= n.w; return *this; }
+		Float4& operator*=(const Float4& n) { x *= n.x; y *= n.y; z *= n.z; w *= n.w; return *this; }
+		Float4& operator/=(const Float4& n) { x /= n.x; y /= n.y; z /= n.z; w /= n.w; return *this; }
+		const float& operator[](uint64_t Index) const { return components[Index]; }
+		float& operator[](uint64_t Index) { return components[Index]; }
+		float lengthSqr() const;
+		float length() const;
+		float dot(const Float4& n) const;
+		float distance(const Float4& n) const;
+		Float4& normalize();
+		Float4& faceForward(const Float4& Incident, const Float4& Reference);
+		Float4& reflect(const Float4& Normal);
+		Float4& refract(const Float4& Normal, float IndexOfRefraction);
+		Float4& operator*=(const Float4x4& m);
+		Float3 toFloat3();
+		Float2 toFloat2();
+	};
+
+	struct Float2x2
+	{
+		union
+		{
+			float data[4];
+			Float2 rows[2];
+			struct
+			{
+				Float2 row0;
+				Float2 row1;
+			};
+		};
+		Float2x2();
+		Float2x2(float a, float b, float c, float d);
+		Float2x2& loadIdentity();
+		Float2x2& operator=(const Float2x2& n)
+		{
+			data[0] = n.data[0]; data[1] = n.data[1];
+			data[2] = n.data[2]; data[3] = n.data[3];
+			return *this;
+		}
+		bool operator==(const Float2x2& n) const
+		{
+			return data[0] == n.data[0] && data[1] == n.data[1] &&
+				data[2] == n.data[2] && data[3] == n.data[3];
+		}
+		Float2& operator[](uint64_t Index) { return rows[Index]; }
+		Float2x2& transpose();
+		Float2x2& operator*=(const Float2x2& m)
+		{
+			float a00 = data[0]; float a01 = data[1];;
+			float a10 = data[2]; float a11 = data[3];;
+
+			float b0 = m.data[0];
+			float b1 = m.data[1];
+
+			data[0] = b0 * a00 + b1 * a10;
+			data[1] = b0 * a01 + b1 * a11;
+
+			b0 = m.data[2];
+			b1 = m.data[3];
+
+			data[2] = b0 * a00 + b1 * a10;
+			data[3] = b0 * a01 + b1 * a11;
+
+			return *this;
+		}
+		Float2x2& rotate(float rad);
+		Float2x2& scale(const Float2& v);
+	};
+
+	struct Float3x3
+	{
+		union
+		{
+			float data[9];
+			Float3 rows[3];
+			struct
+			{
+				Float3 row0;
+				Float3 row1;
+				Float3 row2;
+			};
+		};
+		Float3x3();
+		Float3x3(float a, float b, float c,
+			float d, float e, float f,
+			float g, float h, float i);
+		Float3x3& loadIdentity();
+		Float3x3& operator=(const Float3x3& n)
+		{
+			data[0] = n.data[0]; data[1] = n.data[1]; data[2] = n.data[2];
+			data[3] = n.data[3]; data[4] = n.data[4]; data[5] = n.data[5];
+			data[6] = n.data[6]; data[7] = n.data[7]; data[8] = n.data[8];
+			return *this;
+		}
+		bool operator==(const Float3x3& n) const
+		{
+			return data[0] == n.data[0] && data[1] == n.data[1] && data[2] == n.data[2] &&
+				data[3] == n.data[3] && data[4] == n.data[4] && data[5] == n.data[5];
+			data[6] == n.data[6] && data[7] == n.data[7] && data[8] == n.data[8];
+		}
+		Float3& operator[](uint64_t Index) { return rows[Index]; }
+		Float3x3& transpose();
+		Float3x3& operator*=(const Float3x3& m)
+		{
+			float a00 = data[0]; float a01 = data[1]; float a02 = data[2];
+			float a10 = data[3]; float a11 = data[4]; float a12 = data[5];
+			float a20 = data[6]; float a21 = data[7]; float a22 = data[8];
+
+			float b0 = m.data[0];
+			float b1 = m.data[1];
+			float b2 = m.data[2];
+
+			data[0] = b0 * a00 + b1 * a10 + b2 * a20;
+			data[1] = b0 * a01 + b1 * a11 + b2 * a21;
+			data[2] = b0 * a02 + b1 * a12 + b2 * a22;
+
+			b0 = m.data[3];
+			b1 = m.data[4];
+			b2 = m.data[5];
+
+			data[3] = b0 * a00 + b1 * a10 + b2 * a20;
+			data[4] = b0 * a01 + b1 * a11 + b2 * a21;
+			data[5] = b0 * a02 + b1 * a12 + b2 * a22;
+
+			b0 = m.data[6];
+			b1 = m.data[7];
+			b2 = m.data[8];
+
+			data[6] = b0 * a00 + b1 * a10 + b2 * a20;
+			data[7] = b0 * a01 + b1 * a11 + b2 * a21;
+			data[8] = b0 * a02 + b1 * a12 + b2 * a22;
+
+			return *this;
+		}
+		Float3x3& translate(const Float3& n);
+		Float3x3& rotate(float rad);
+		Float3x3& scale(const Float2& n);
+	};
+
+	struct Float4x4
+	{
+		union
+		{
+			float data[16];
+			Float4 rows[4];
+			struct
+			{
+				Float4 row0;
+				Float4 row1;
+				Float4 row2;
+				Float4 row3;
+			};
+		};
+		Float4x4();
+		Float4x4(float a, float b, float c, float d,
+			float e, float f, float g, float h,
+			float i, float j, float k, float l,
+			float m, float n, float o, float p);
+		Float4x4& loadIdentity();
+		Float4x4& operator=(const Float4x4& n)
+		{
+			data[0] = n.data[0]; data[1] = n.data[1]; data[2] = n.data[2]; data[3] = n.data[3];
+			data[4] = n.data[4]; data[5] = n.data[5]; data[6] = n.data[6]; data[7] = n.data[7];
+			data[8] = n.data[8]; data[9] = n.data[9]; data[10] = n.data[10]; data[11] = n.data[11];
+			data[12] = n.data[12]; data[13] = n.data[13]; data[14] = n.data[14]; data[15] = n.data[15];
+			return *this;
+		}
+		bool operator==(const Float4x4& n) const
+		{
+			return data[0] == n.data[0] && data[1] == n.data[1] && data[2] == n.data[2] && data[3] == n.data[3] &&
+				data[4] == n.data[4] && data[5] == n.data[5] && data[6] == n.data[6] && data[7] == n.data[7] &&
+				data[8] == n.data[8] && data[9] == n.data[9] && data[10] == n.data[10] && data[11] == n.data[11] &&
+				data[12] == n.data[12] && data[13] == n.data[13] && data[14] == n.data[14] && data[15] == n.data[15];
+		}
+		Float4& operator[](uint64_t Index) { return rows[Index]; }
+		Float4x4& transpose();
+		Float4x4& operator*=(const Float4x4& m)
+		{
+			float a00 = data[0]; float a01 = data[1]; float a02 = data[2]; float a03 = data[3];
+			float a10 = data[4]; float a11 = data[5]; float a12 = data[6]; float a13 = data[7];
+			float a20 = data[8]; float a21 = data[9]; float a22 = data[10]; float a23 = data[11];
+			float a30 = data[12]; float a31 = data[13]; float a32 = data[14]; float a33 = data[15];
+
+			float b0 = m.data[0];
+			float b1 = m.data[1];
+			float b2 = m.data[2];
+			float b3 = m.data[3];
+
+			data[0] = b0 * a00 + b1 * a10 + b2 * a20 + b3 * a30;
+			data[1] = b0 * a01 + b1 * a11 + b2 * a21 + b3 * a31;
+			data[2] = b0 * a02 + b1 * a12 + b2 * a22 + b3 * a32;
+			data[3] = b0 * a03 + b1 * a13 + b2 * a23 + b3 * a33;
+
+			b0 = m.data[4];
+			b1 = m.data[5];
+			b2 = m.data[6];
+			b3 = m.data[7];
+
+			data[4] = b0 * a00 + b1 * a10 + b2 * a20 + b3 * a30;
+			data[5] = b0 * a01 + b1 * a11 + b2 * a21 + b3 * a31;
+			data[6] = b0 * a02 + b1 * a12 + b2 * a22 + b3 * a32;
+			data[7] = b0 * a03 + b1 * a13 + b2 * a23 + b3 * a33;
+
+			b0 = m.data[8];
+			b1 = m.data[9];
+			b2 = m.data[10];
+			b3 = m.data[11];
+
+			data[8] = b0 * a00 + b1 * a10 + b2 * a20 + b3 * a30;
+			data[9] = b0 * a01 + b1 * a11 + b2 * a21 + b3 * a31;
+			data[10] = b0 * a02 + b1 * a12 + b2 * a22 + b3 * a32;
+			data[11] = b0 * a03 + b1 * a13 + b2 * a23 + b3 * a33;
+
+			b0 = m.data[12];
+			b1 = m.data[13];
+			b2 = m.data[14];
+			b3 = m.data[15];
+
+			data[12] = b0 * a00 + b1 * a10 + b2 * a20 + b3 * a30;
+			data[13] = b0 * a01 + b1 * a11 + b2 * a21 + b3 * a31;
+			data[14] = b0 * a02 + b1 * a12 + b2 * a22 + b3 * a32;
+			data[15] = b0 * a03 + b1 * a13 + b2 * a23 + b3 * a33;
+
+			return *this;
+		}
+		Float4x4& translate(const Float3& v);
+		Float4x4& scale(const Float3& v);
+		Float4x4& rotate(const Float3& v);
+		Float4x4& rotateX(float rad);
+		Float4x4& rotateY(float rad);
+		Float4x4& rotateZ(float rad);
+		Float4x4& perspective(float fovy, float aspect, float nearBound, float farBound);
+		Float4x4& orthographic(float left, float right, float bottom, float top, float nearBound, float farBound);
+		Float4x4& lookAt(const Float3& eye, const Float3& center, const Float3& up);
+		Float4x4& invert();
+	};
+
+
+	struct Quaternion
+	{
+		union
+		{
+			struct { float x, y, z, w; };
+			float components[4];
+		};
+
+		Quaternion();
+		Quaternion(float x);
+		Quaternion(float x, float y, float z, float w);
+		Quaternion& loadIdentity();
+		Quaternion& fromEulerAngles(const Float3& eulerAngles);
+		Float3 toEulerAngles();
+		Quaternion& rotateX(float rad);
+		Quaternion& rotateY(float rad);
+		Quaternion& rotateZ(float rad);
+		Float4x4 toFloat4x4();
+		float& operator[](uint64_t Index) { return components[Index]; }
+	};
+
+	struct Matrix2D
+	{
+		Matrix2D();
+		Matrix2D(const Matrix2D& Other);
+		Matrix2D(float a, float b, float c, float d, float tx, float ty);
+		Matrix2D& loadIdentity();
+		Matrix2D& translate(float x, float y);
+		Matrix2D& translate(Float2& TranslateVector);
+		Matrix2D& scale(float x, float y);
+		Matrix2D& scale(Float2& ScaleVector);
+		Matrix2D& rotate(float Rotation);
+		float& operator[](uint64_t Index) { return components[Index]; }
+		Matrix2D& operator=(const Matrix2D& Other);
+
+
+		union
+		{
+			float components[6];
+			struct { float a, b, c, d, tx, ty; };
+			struct { Float2 ab, cd, txty; };
+		};
+	};
+
 }

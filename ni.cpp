@@ -152,13 +152,14 @@ ni::DescriptorTable ni::DescriptorAllocator::allocateDescriptorTable(uint32_t de
     return table;
 }
 
-void ni::init(uint32_t width, uint32_t height) {
+void ni::init(uint32_t width, uint32_t height, const char* title) {
     memset(&renderer, 0, sizeof(renderer));
 	renderer.windowWidth = width;
 	renderer.windowHeight = height;
 
     renderer.imagesToUpload = (Texture**)malloc(NI_MAX_DESCRIPTORS * sizeof(Texture*));
     renderer.imageToUploadNum = 0;
+    renderer.frameCount = 0;
 
     memset(keysDown, 0, sizeof(keysDown));
     memset(mouseBtnsDown, 0, sizeof(mouseBtnsDown));
@@ -219,8 +220,8 @@ void ni::init(uint32_t width, uint32_t height) {
 
 
     renderer.windowHandle = CreateWindowExA(
-        WS_EX_LEFT, "WindowClass", "GPU Driven Sprites", windowStyle, CW_USEDEFAULT,
-        CW_USEDEFAULT, adjustedWidth, adjustedHeight, nullptr, nullptr,
+        WS_EX_LEFT, "WindowClass", title, windowStyle, 100,
+        100, adjustedWidth, adjustedHeight, nullptr, nullptr,
         GetModuleHandle(nullptr), nullptr);
     loadPIX();
 
@@ -527,6 +528,7 @@ void ni::present(bool vsync) {
     NI_D3D_ASSERT(renderer.swapChain->Present(vsync ? 1 : 0, 0), "Failed to present");
     NI_D3D_ASSERT(renderer.commandQueue->Signal(renderer.presentFence, ++renderer.presentFenceValue), "Failed to signal present fence");
     renderer.presentFrame = renderer.presentFenceValue % NI_BACKBUFFER_COUNT;
+    renderer.frameCount++;
 }
 
 ID3D12PipelineState* ni::createGraphicsPipelineState(const wchar_t* name, const D3D12_GRAPHICS_PIPELINE_STATE_DESC& psoDesc) {
@@ -546,39 +548,38 @@ ID3D12PipelineState* ni::createComputePipelineState(const wchar_t* name, const D
 float ni::getViewWidth() { return (float)renderer.windowWidth; }
 float ni::getViewHeight() { return (float)renderer.windowHeight; }
 
-ni::Resource ni::createBuffer(const wchar_t* name, size_t bufferSize, BufferType type, bool initToZero) {
+ni::Resource ni::createBuffer(const wchar_t* name, size_t bufferSize, BufferType type, bool initToZero, D3D12_RESOURCE_FLAGS flags) {
     D3D12_HEAP_TYPE heapType;
     D3D12_RESOURCE_STATES initialState;
-    D3D12_RESOURCE_FLAGS flags;
     switch (type) {
     case INDEX_BUFFER:
         initialState = D3D12_RESOURCE_STATE_INDEX_BUFFER;
-        flags = D3D12_RESOURCE_FLAG_NONE;
+        flags |= D3D12_RESOURCE_FLAG_NONE;
         heapType = D3D12_HEAP_TYPE_DEFAULT;
         break;
     case VERTEX_BUFFER:
         initialState = D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER;
-        flags = D3D12_RESOURCE_FLAG_NONE;
+        flags |= D3D12_RESOURCE_FLAG_NONE;
         heapType = D3D12_HEAP_TYPE_DEFAULT;
         break;
     case CONSTANT_BUFFER:
         initialState = D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER;
-        flags = D3D12_RESOURCE_FLAG_NONE;
+        flags |= D3D12_RESOURCE_FLAG_NONE;
         heapType = D3D12_HEAP_TYPE_DEFAULT;
         break;
     case UNORDERED_BUFFER:
         initialState = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
-        flags = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
+        flags |= D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
         heapType = D3D12_HEAP_TYPE_DEFAULT;
         break;
     case UPLOAD_BUFFER:
         initialState = D3D12_RESOURCE_STATE_GENERIC_READ;
-        flags = D3D12_RESOURCE_FLAG_NONE;
+        flags |= D3D12_RESOURCE_FLAG_NONE;
         heapType = D3D12_HEAP_TYPE_UPLOAD;
         break;
     case SHADER_RESOURCE_BUFFER:
         initialState = D3D12_RESOURCE_STATE_ALL_SHADER_RESOURCE;
-        flags = D3D12_RESOURCE_FLAG_NONE;
+        flags |= D3D12_RESOURCE_FLAG_NONE;
         heapType = D3D12_HEAP_TYPE_DEFAULT;
         break;
     default:
@@ -820,7 +821,6 @@ size_t ni::getDXGIFormatBytes(DXGI_FORMAT format) {
 }
 
 ni::Texture* ni::createTexture(const wchar_t* name, uint32_t width, uint32_t height, uint32_t depth, const void* pixels, DXGI_FORMAT dxgiFormat, D3D12_RESOURCE_FLAGS flags) {
-    NI_ASSERT(depth == 1, "No 3D textures supported yet.");
     Texture* texture = new Texture();
     D3D12_RESOURCE_DIMENSION dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
 
@@ -991,6 +991,10 @@ void* ni::allocReadFile(const char* path) {
         return buffer;
     }
     return nullptr;
+}
+
+uint64_t ni::getFrameCount() {
+    return renderer.frameCount;
 }
 
 ni::FileReader::FileReader(const char* path) {

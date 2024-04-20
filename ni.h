@@ -361,6 +361,7 @@ namespace ni {
 		uint64_t presentFenceValue;
 		uint64_t presentFrame;
 		uint64_t currentFrame;
+		uint64_t frameCount;
 		Texture** imagesToUpload;
 		uint32_t imageToUploadNum;
 		float mouseX;
@@ -368,7 +369,7 @@ namespace ni {
 		bool shouldQuit;
 	};
 
-	void init(uint32_t width, uint32_t height);
+	void init(uint32_t width, uint32_t height, const char* title);
 	void setFrameUserData(uint32_t frame, void* data);
 	void waitForCurrentFrame();
 	void waitForAllFrames();
@@ -385,7 +386,7 @@ namespace ni {
 	ID3D12PipelineState* createComputePipelineState(const wchar_t* name, const D3D12_COMPUTE_PIPELINE_STATE_DESC& psoDesc);
 	float getViewWidth();
 	float getViewHeight();
-	Resource createBuffer(const wchar_t* name, size_t bufferSize, BufferType type, bool initToZero = false);
+	Resource createBuffer(const wchar_t* name, size_t bufferSize, BufferType type, bool initToZero = false, D3D12_RESOURCE_FLAGS flags = D3D12_RESOURCE_FLAG_NONE);
 	D3D12_CPU_DESCRIPTOR_HANDLE getRenderTargetViewCPUHandle();
 	D3D12_GPU_DESCRIPTOR_HANDLE getRenderTargetViewGPUHandle();
 	D3D12_CPU_DESCRIPTOR_HANDLE getDepthStencilViewCPUHandle();
@@ -408,6 +409,7 @@ namespace ni {
 	size_t getFileSize(const char* path);
 	bool readFile(const char* path, void* outBuffer);
 	void* allocReadFile(const char* path);
+	uint64_t getFrameCount();
 }
 
 #ifdef min

@@ -884,7 +884,7 @@ ni::Texture* ni::createTexture(const wchar_t* name, uint32_t width, uint32_t hei
         uint64_t alignedWidth = alignSize(width, D3D12_TEXTURE_DATA_PITCH_ALIGNMENT);
         uint64_t dataSize = alignedWidth * height * depth * pixelSize;
         uint64_t bufferSize = dataSize < 256 ? 256 : dataSize;
-        texture->upload = ni::createBuffer(L"SpriteImage::upload", bufferSize, ni::UPLOAD_BUFFER, false);
+        texture->upload = ni::createBuffer(L"SpriteImage::upload", (size_t)bufferSize, ni::UPLOAD_BUFFER, false);
         texture->cpuData = malloc(pixelSize * width * height * depth);
         NI_ASSERT(texture->cpuData != nullptr, "Failed to allocate cpu data for uploading to texture memory");
         if (texture->cpuData != nullptr) {
@@ -952,7 +952,7 @@ size_t ni::getFileSize(const char* path) {
     if (fileHandle != INVALID_HANDLE_VALUE) {
         LARGE_INTEGER fileSize = {};
         if (GetFileSizeEx(fileHandle, &fileSize)) {
-            return fileSize.QuadPart;
+            return (size_t)fileSize.QuadPart;
         }
         CloseHandle(fileHandle);
     }
@@ -980,7 +980,7 @@ void* ni::allocReadFile(const char* path) {
     if (fileHandle != INVALID_HANDLE_VALUE) {
         LARGE_INTEGER fileSize = {};
         GetFileSizeEx(fileHandle, &fileSize);
-        void* buffer = malloc(fileSize.QuadPart);
+        void* buffer = malloc((size_t)fileSize.QuadPart);
         DWORD readBytes = 0;
         if (!ReadFile(fileHandle, buffer, (DWORD)fileSize.QuadPart, &readBytes, nullptr)) {
             CloseHandle(fileHandle);
@@ -1033,7 +1033,7 @@ D3D12_GPU_DESCRIPTOR_HANDLE ni::DescriptorTable::gpuHandle(uint64_t index) {
 
 D3D12_CPU_DESCRIPTOR_HANDLE ni::DescriptorTable::cpuHandle(uint64_t index) {
     D3D12_CPU_DESCRIPTOR_HANDLE handle = cpuBaseHandle;
-    handle.ptr += (index * handleSize);
+    handle.ptr += ((size_t)index * handleSize);
     return handle;
 }
 

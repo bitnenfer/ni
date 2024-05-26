@@ -4,6 +4,8 @@
 #include <d3d12.h>
 #include <dxgi1_6.h>
 #include <math.h>
+#include <utility>
+#include <new>
 
 ///////////////////////////////////////////////////////////////
 // CONFIG 
@@ -168,6 +170,13 @@ namespace ni {
 			num = 0;
 		}
 
+		template<typename... TArgs>
+		T& emplace(TArgs... args) {
+			checkResize();
+			T* ptr = new (&data[num++]) T(std::forward<TArgs...>(args...));
+			return *ptr;
+		}
+
 		void add(const T& element) {
 			checkResize();
 			data[num++] = element;
@@ -182,7 +191,7 @@ namespace ni {
 		}
 
 		void resize(TSize newCapacity) {
-			T* newData = (T*)realloc(data, newCapacity * sizeof(T));
+			T* newData = (T*)realloc(data, (size_t)newCapacity * sizeof(T));
 			NI_ASSERT(newData != nullptr, "Failed to reallocate array");
 			data = newData;
 			capacity = newCapacity;
@@ -200,10 +209,52 @@ namespace ni {
 		TSize getNum() const { return num; }
 		TSize getCapacity() const { return capacity;  }
 
+		const T& operator[](TSize index) const { return data[index]; }
+		T& operator[](TSize index) { return data[index]; }
+
 	private:
 		T* data;
 		TSize num;
 		TSize capacity;
+	};
+
+	template<typename T, size_t MAX_COUNT, typename TSize = uint64_t>
+	struct FixedArray {
+
+		FixedArray() : num(0) {}
+		
+		void reset() {
+			num = 0;
+		}
+
+		template<typename... TArgs>
+		T& emplace(TArgs... args) {
+			NI_ASSERT(num < MAX_COUNT - 1, "Exceeded the limit of the fixed array %u", MAX_COUNT);
+			T* ptr = new (&data[num++]) T(std::forward(args)...);
+			return *ptr;
+		}
+
+		void add(const T& element) {
+			NI_ASSERT(num < MAX_COUNT - 1, "Exceeded the limit of the fixed array %u", MAX_COUNT);
+			data[num++] = element;
+		}
+		void remove(TSize index) {
+			NI_ASSERT(index < num, "Index out of bounds");
+			for (TSize start = index; start < num - 1; ++start) {
+				data[start] = data[start + 1];
+			}
+			num--;
+		}
+		T* getData() { return data; }
+		const T* getData() const { return data; }
+		TSize getNum() const { return num; }
+		TSize getCapacity() const { return (TSize)MAX_COUNT; }
+		const T& operator[](TSize index) const { return data[index]; }
+		T& operator[](TSize index) { return data[index]; }
+
+	private:
+		T data[MAX_COUNT];
+		TSize num;
 	};
 
 	struct RootSignatureDescriptorRange {
@@ -222,6 +273,9 @@ namespace ni {
 		RootSignatureBuilder() {}
 		~RootSignatureBuilder() {}
 
+		void addRootParameterCBV(uint32_t shaderRegister, uint32_t registerSapce, D3D12_SHADER_VISIBILITY shaderVisibility);
+		void addRootParameterSRV(uint32_t shaderRegister, uint32_t registerSapce, D3D12_SHADER_VISIBILITY shaderVisibility);
+		void addRootParameterUAV(uint32_t shaderRegister, uint32_t registerSapce, D3D12_SHADER_VISIBILITY shaderVisibility);
 		void addRootParameterDescriptorTable(const D3D12_DESCRIPTOR_RANGE* ranges, uint32_t rangeNum, D3D12_SHADER_VISIBILITY shaderVisibility);
 		void addRootParameterDescriptorTable(const RootSignatureDescriptorRange& ranges, D3D12_SHADER_VISIBILITY shaderVisibility);
 		void addRootParameterConstant(uint32_t shaderRegister, uint32_t registerSpace, uint32_t num32BitValues, D3D12_SHADER_VISIBILITY shaderVisibility);
@@ -298,6 +352,21 @@ namespace ni {
 	struct DescriptorTable {
 		void reset();
 		DescriptorHandle allocate();
+		void allocUAVBuffer(ni::Resource& resource, ni::Resource* counter, DXGI_FORMAT format, uint64_t firstElement, uint32_t numElements, uint32_t structureByteStride, uint64_t counterOffsetInBytes, bool rawBuffer = false);
+		void allocUAVTex1D(ni::Resource& resource, ni::Resource* counter, DXGI_FORMAT format, uint32_t mipSlice);
+		void allocUAVTex1DArray(ni::Resource& resource, ni::Resource* counter, DXGI_FORMAT format, uint32_t mipSlice, uint32_t firstArraySlice, uint32_t arraySize);
+		void allocUAVTex2D(ni::Resource& resource, ni::Resource* counter, DXGI_FORMAT format, uint32_t mipSlice, uint32_t planeSlice);
+		void allocUAVTex2DArray(ni::Resource& resource, ni::Resource* counter, DXGI_FORMAT format, uint32_t mipSlice, uint32_t firstArraySlice, uint32_t arraySize, uint32_t planeSlice);
+		void allocUAVTex3D(ni::Resource& resource, ni::Resource* counter, DXGI_FORMAT format, uint32_t mipSlice, uint32_t firstWSlice, uint32_t wSize);
+		void allocSRVBuffer(ni::Resource& resource, DXGI_FORMAT format, uint64_t firstElement, uint32_t numElements, uint32_t structureByteStride, bool rawBuffer = false);
+		void allocSRVTex1D(ni::Resource& resource, DXGI_FORMAT format, uint32_t mostDetailedMip, uint32_t mipLevels, float resourceMinLODClamp);
+		void allocSRVTex1DArray(ni::Resource& resource, DXGI_FORMAT format, uint32_t mostDetailedMip, uint32_t mipLevels, uint32_t firstArraySlice, uint32_t arraySize, float resourceMinLODClamp);
+		void allocSRVTex2D(ni::Resource& resource, DXGI_FORMAT format, uint32_t mostDetailedMip, uint32_t mipLevels, uint32_t planeSlice, float resourceMinLODClamp);
+		void allocSRVTex2DArray(ni::Resource& resource, DXGI_FORMAT format, uint32_t mostDetailedMip, uint32_t mipLevels, uint32_t firstArraySlice, uint32_t arraySize, uint32_t planeSlice, float resourceMinLODClamp);
+		void allocSRVTex3D(ni::Resource& resource, DXGI_FORMAT format, uint32_t mostDetailedMip, uint32_t mipLevels, float resourceMinLODClamp);
+		void allocSRVTexCube(ni::Resource& resource, DXGI_FORMAT format, uint32_t mostDetailedMip, uint32_t mipLevels, float resourceMinLODClamp);
+
+
 		D3D12_GPU_DESCRIPTOR_HANDLE gpuHandle(uint64_t index);
 		D3D12_CPU_DESCRIPTOR_HANDLE cpuHandle(uint64_t index);
 		D3D12_GPU_DESCRIPTOR_HANDLE gpuBaseHandle;
@@ -320,8 +389,6 @@ namespace ni {
 	};
 
 	struct FrameData {
-		DescriptorTable descriptorTable;
-		DescriptorAllocator descriptorAllocator;
 		ID3D12GraphicsCommandList* commandList;
 		ID3D12CommandAllocator* commandAllocator;
 		ID3D12Fence* fence;
@@ -342,6 +409,210 @@ namespace ni {
 		uint32_t state;
 	};
 
+	struct DescriptorRangeEntry {
+
+		DescriptorRangeEntry(D3D12_DESCRIPTOR_RANGE_TYPE type, uint32_t descriptorNum, uint32_t baseShaderRegister, uint32_t registerSpace) :
+			type(type), descriptorNum(descriptorNum), baseShaderRegister(baseShaderRegister), registerSpace(registerSpace) {
+		}
+
+		DescriptorRangeEntry() = default;
+
+		D3D12_DESCRIPTOR_RANGE_TYPE type;
+		uint32_t descriptorNum;
+		uint32_t baseShaderRegister;
+		uint32_t registerSpace;
+	};
+
+	struct DescriptorRange {
+		static constexpr uint32_t MAX_DESCRIPTOR_RANGES = 8;
+
+		template<typename... TArgs>
+		DescriptorRange(TArgs... args) : rangeNum(0) {
+			memset(ranges, 0, sizeof(ranges));
+			addRangesImpl(args...);
+		}
+
+		template<typename... TArgs>
+		DescriptorRange& addRanges(TArgs... args) {
+			return addRangesImpl(args...);
+		}
+
+		const D3D12_DESCRIPTOR_RANGE& operator[](uint32_t index) const { return ranges[index]; }
+		uint32_t getRangeNum() const { return rangeNum; }
+
+	private:
+		DescriptorRange& addRange(const DescriptorRangeEntry& rangeEntry) {
+			NI_ASSERT(rangeNum < MAX_DESCRIPTOR_RANGES - 1, "Exceeded the limit of descriptor range %u.", MAX_DESCRIPTOR_RANGES);
+			D3D12_DESCRIPTOR_RANGE range = {};
+			range.RangeType = rangeEntry.type;
+			range.NumDescriptors = rangeEntry.descriptorNum;
+			range.BaseShaderRegister = rangeEntry.baseShaderRegister;
+			range.RegisterSpace = rangeEntry.registerSpace;
+			range.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
+			ranges[rangeNum++] = range;
+			return *this;
+		}
+		DescriptorRange& addRangesImpl() { return *this; }
+		template<typename T, typename... TArgs>
+		DescriptorRange& addRangesImpl(const T& range, TArgs... args) {
+			addRange(range);
+			return addRangesImpl(args...);
+		}
+
+
+		D3D12_DESCRIPTOR_RANGE ranges[MAX_DESCRIPTOR_RANGES];
+		uint32_t rangeNum;
+	};
+
+	struct BindingLayout {
+		static constexpr uint32_t MAX_ROOT_PARAMETERS = 8;
+		static constexpr uint32_t MAX_STATIC_SAMPLERS = 4;
+
+		BindingLayout() : rootParameterNum(0), staticSamplerNum(0) {
+			memset(rootParameters, 0, sizeof(rootParameters));
+			memset(staticSamplers, 0, sizeof(staticSamplers));
+		}
+		void addDescriptorCBV(uint32_t shaderRegister, uint32_t registerSpace, D3D12_SHADER_VISIBILITY shaderVisibility) {
+			NI_ASSERT(rootParameterNum + 1 <= MAX_ROOT_PARAMETERS, "Exceeded the limit of root parameters %u.", MAX_ROOT_PARAMETERS);
+			D3D12_ROOT_PARAMETER rootParam = {};
+			rootParam.ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
+			rootParam.Descriptor.RegisterSpace = registerSpace;
+			rootParam.Descriptor.ShaderRegister = shaderRegister;
+			rootParam.ShaderVisibility = shaderVisibility;
+			rootParameters[rootParameterNum++] = rootParam;
+		}
+		void addDescriptorSRV(uint32_t shaderRegister, uint32_t registerSpace, D3D12_SHADER_VISIBILITY shaderVisibility) {
+			NI_ASSERT(rootParameterNum + 1 <= MAX_ROOT_PARAMETERS, "Exceeded the limit of root parameters %u.", MAX_ROOT_PARAMETERS);
+			D3D12_ROOT_PARAMETER rootParam = {};
+			rootParam.ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV;
+			rootParam.Descriptor.RegisterSpace = registerSpace;
+			rootParam.Descriptor.ShaderRegister = shaderRegister;
+			rootParam.ShaderVisibility = shaderVisibility;
+			rootParameters[rootParameterNum++] = rootParam;
+		}
+		void addDescriptorUAV(uint32_t shaderRegister, uint32_t registerSpace, D3D12_SHADER_VISIBILITY shaderVisibility) {
+			NI_ASSERT(rootParameterNum + 1 <= MAX_ROOT_PARAMETERS, "Exceeded the limit of root parameters %u.", MAX_ROOT_PARAMETERS);
+			D3D12_ROOT_PARAMETER rootParam = {};
+			rootParam.ParameterType = D3D12_ROOT_PARAMETER_TYPE_UAV;
+			rootParam.Descriptor.RegisterSpace = registerSpace;
+			rootParam.Descriptor.ShaderRegister = shaderRegister;
+			rootParam.ShaderVisibility = shaderVisibility;
+			rootParameters[rootParameterNum++] = rootParam;
+		}
+		void addDescriptorTable(const DescriptorRange& descriptorRange, D3D12_SHADER_VISIBILITY shaderVisibility) {
+			NI_ASSERT(rootParameterNum + 1 <= MAX_ROOT_PARAMETERS, "Exceeded the limit of root parameters %u.", MAX_ROOT_PARAMETERS);
+			D3D12_DESCRIPTOR_RANGE* rangeOffset = (D3D12_DESCRIPTOR_RANGE*)(descriptorTableRanges.getNum());
+			for (uint32_t index = 0; index < descriptorRange.getRangeNum(); ++index) {
+				const D3D12_DESCRIPTOR_RANGE& range = descriptorRange[index];
+				descriptorTableRanges.add(range);
+			}
+
+			D3D12_ROOT_PARAMETER rootParam = {};
+			rootParam.ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+			rootParam.DescriptorTable.pDescriptorRanges = rangeOffset;
+			rootParam.DescriptorTable.NumDescriptorRanges = descriptorRange.getRangeNum();
+			rootParam.ShaderVisibility = shaderVisibility;
+			rootParameters[rootParameterNum++] = rootParam;
+		}
+		void add32BitConstant(uint32_t shaderRegister, uint32_t registerSpace, uint32_t num32BitValues, D3D12_SHADER_VISIBILITY shaderVisibility) {
+			NI_ASSERT(rootParameterNum + 1 <= MAX_ROOT_PARAMETERS, "Exceeded the limit of root parameters %u.", MAX_ROOT_PARAMETERS);
+			D3D12_ROOT_PARAMETER rootParam = {};
+			rootParam.ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
+			rootParam.Constants.Num32BitValues = num32BitValues;
+			rootParam.Constants.RegisterSpace = registerSpace;
+			rootParam.Constants.ShaderRegister = shaderRegister;
+			rootParam.ShaderVisibility = shaderVisibility;
+			rootParameters[rootParameterNum++] = rootParam;
+		}
+		void addStaticSampler(D3D12_FILTER filter, D3D12_TEXTURE_ADDRESS_MODE addressModeAll, uint32_t shaderRegister, uint32_t registerSpace, D3D12_SHADER_VISIBILITY shaderVisibility) {
+			NI_ASSERT(staticSamplerNum + 1 <= MAX_STATIC_SAMPLERS, "Exceeded the limit of static samplers %u.", MAX_STATIC_SAMPLERS);
+			D3D12_STATIC_SAMPLER_DESC staticSampler = {};
+			staticSampler.Filter = filter;
+			staticSampler.AddressU = addressModeAll;
+			staticSampler.AddressV = addressModeAll;
+			staticSampler.AddressW = addressModeAll;
+			staticSampler.MipLODBias = 0.0f;
+			staticSampler.MaxAnisotropy = 0;
+			staticSampler.ComparisonFunc = D3D12_COMPARISON_FUNC_ALWAYS;
+			staticSampler.BorderColor = D3D12_STATIC_BORDER_COLOR_OPAQUE_BLACK;
+			staticSampler.MinLOD = 0;
+			staticSampler.MaxLOD = 0;
+			staticSampler.ShaderRegister = shaderRegister;
+			staticSampler.RegisterSpace = registerSpace;
+			staticSampler.ShaderVisibility = shaderVisibility;
+			staticSamplers[staticSamplerNum++] = staticSampler;
+		}
+
+		D3D12_ROOT_PARAMETER rootParameters[MAX_ROOT_PARAMETERS];
+		D3D12_STATIC_SAMPLER_DESC staticSamplers[MAX_STATIC_SAMPLERS];
+		ni::Array<D3D12_DESCRIPTOR_RANGE> descriptorTableRanges;
+		uint32_t rootParameterNum;
+		uint32_t staticSamplerNum;
+	};
+
+	struct VertexAttribute {
+		DXGI_FORMAT format;
+		const char* semanticName;
+		uint32_t semanticIndex;
+		uint32_t offset;
+	};
+
+	struct VertexBufferLayout {
+
+		VertexBufferLayout& addVertexAttribute(DXGI_FORMAT format, const char* semanticName, uint32_t semanticIndex, uint32_t offset) {
+			VertexAttribute& attrib = vertexAttributes.emplace();
+			attrib.format = format;
+			attrib.semanticName = semanticName;
+			attrib.semanticIndex = semanticIndex;
+			attrib.offset = offset;
+			return *this;
+		}
+
+		ni::FixedArray<VertexAttribute, 8> vertexAttributes;
+		uint32_t vertexStride;
+	};
+
+	struct VertexStage {
+
+		VertexBufferLayout& addVertexBuffer(uint32_t vertexStride) {
+			VertexBufferLayout& vertexBuffer = vertexBuffers.emplace();
+			vertexBuffer.vertexStride = vertexStride;
+			return vertexBuffer;
+		}
+
+		D3D12_SHADER_BYTECODE shader;
+		ni::FixedArray<VertexBufferLayout, 4> vertexBuffers;
+	};
+
+	struct PixelStage {
+		D3D12_SHADER_BYTECODE shader;
+		ni::Array<DXGI_FORMAT, uint32_t> renderTargets;
+		DXGI_FORMAT depthStencilFormat = DXGI_FORMAT_UNKNOWN;
+	};
+
+	struct RasterizerStage {
+		D3D12_CULL_MODE cullMode = D3D12_CULL_MODE_NONE;
+	};
+
+	struct ComputePipelineDesc {
+		ComputePipelineDesc() = default;
+		BindingLayout layout;
+		D3D12_SHADER_BYTECODE shader;
+	};
+
+	struct GraphicsPipelineDesc {
+		GraphicsPipelineDesc() = default;
+		BindingLayout layout;
+		VertexStage vertex;
+		PixelStage pixel;
+		RasterizerStage rasterizer;
+	};
+
+	struct PipelineState {
+		ID3D12RootSignature* rootSignature;
+		ID3D12PipelineState* pso;
+	};
+
 	struct Renderer {
 		ID3D12Device5* device;
 		ID3D12Debug3* debugInterface;
@@ -352,7 +623,7 @@ namespace ni {
 		ID3D12DescriptorHeap* rtvDescriptorHeap;
 		ID3D12DescriptorHeap* dsvDescriptorHeap;
 		FrameData frames[NI_FRAME_COUNT];
-		ID3D12Resource* backbuffers[NI_FRAME_COUNT];
+		Texture backbuffers[NI_FRAME_COUNT];
 		ID3D12Fence* presentFence;
 		HANDLE presentFenceEvent;
 		HWND windowHandle;
@@ -380,13 +651,21 @@ namespace ni {
 	ID3D12Device* getDevice();
 	ni::FrameData& beginFrame();
 	void endFrame();
-	ID3D12Resource* getCurrentBackbuffer();
+	Texture* getCurrentBackbuffer();
 	void present(bool vsync = true);
+	DescriptorAllocator* createDescriptorAllocator(D3D12_DESCRIPTOR_HEAP_TYPE type, uint32_t descriptorNum, D3D12_DESCRIPTOR_HEAP_FLAGS flags);
+	void destroyDescriptorAllocator(DescriptorAllocator* descriptorAllocator);
 	ID3D12PipelineState* createGraphicsPipelineState(const wchar_t* name, const D3D12_GRAPHICS_PIPELINE_STATE_DESC& psoDesc);
 	ID3D12PipelineState* createComputePipelineState(const wchar_t* name, const D3D12_COMPUTE_PIPELINE_STATE_DESC& psoDesc);
+	ID3D12PipelineState* createGraphicsPipelineState(const D3D12_GRAPHICS_PIPELINE_STATE_DESC& psoDesc);
+	ID3D12PipelineState* createComputePipelineState(const D3D12_COMPUTE_PIPELINE_STATE_DESC& psoDesc);
 	float getViewWidth();
 	float getViewHeight();
+	float getViewAspectRatio();
+	uint32_t getViewWidthUint();
+	uint32_t getViewHeightUint();
 	Resource createBuffer(const wchar_t* name, size_t bufferSize, BufferType type, bool initToZero = false, D3D12_RESOURCE_FLAGS flags = D3D12_RESOURCE_FLAG_NONE);
+	Resource createBuffer(size_t bufferSize, BufferType type, bool initToZero = false, D3D12_RESOURCE_FLAGS flags = D3D12_RESOURCE_FLAG_NONE);
 	D3D12_CPU_DESCRIPTOR_HANDLE getRenderTargetViewCPUHandle();
 	D3D12_GPU_DESCRIPTOR_HANDLE getRenderTargetViewGPUHandle();
 	D3D12_CPU_DESCRIPTOR_HANDLE getDepthStencilViewCPUHandle();
@@ -394,6 +673,7 @@ namespace ni {
 	float mouseX();
 	float mouseY();
 	bool mouseDown(MouseButton button);
+	bool mouseClick(MouseButton button);
 	bool keyDown(KeyCode keyCode);
 	float randomFloat();
 	uint32_t randomUint();
@@ -401,6 +681,7 @@ namespace ni {
 	size_t getDXGIFormatBits(DXGI_FORMAT format);
 	size_t getDXGIFormatBytes(DXGI_FORMAT format);
 	Texture* createTexture(const wchar_t* name, uint32_t width, uint32_t height, uint32_t depth, const void* pixels, DXGI_FORMAT dxgiFormat = DXGI_FORMAT_R8G8B8A8_UNORM, D3D12_RESOURCE_FLAGS flags = D3D12_RESOURCE_FLAG_NONE);
+	Texture* createTexture(uint32_t width, uint32_t height, uint32_t depth, const void* pixels, DXGI_FORMAT dxgiFormat = DXGI_FORMAT_R8G8B8A8_UNORM, D3D12_RESOURCE_FLAGS flags = D3D12_RESOURCE_FLAG_NONE);
 	void destroyTexture(Texture*& image);
 	uint64_t murmurHash(const void* key, uint64_t keyLength, uint64_t seed);
 	inline void* offsetPtr(void* Ptr, intptr_t Offset) { return (void*)((intptr_t)Ptr + Offset); }
@@ -410,6 +691,8 @@ namespace ni {
 	bool readFile(const char* path, void* outBuffer);
 	void* allocReadFile(const char* path);
 	uint64_t getFrameCount();
+	PipelineState buildComputePipeline(ComputePipelineDesc& desc);
+	PipelineState buildGraphicsPipeline(GraphicsPipelineDesc& desc);
 }
 
 #ifdef min
@@ -903,6 +1186,24 @@ namespace ni {
 			struct { float a, b, c, d, tx, ty; };
 			struct { Float2 ab, cd, txty; };
 		};
+	};
+
+	struct FlyCamera {
+		FlyCamera(ni::Float3 initialPosition = { 0, 0, 0 });
+		void update();
+		void update(ni::Float3 newPosition, ni::Float3 newEuler);
+		ni::Float4x4 makeViewMatrix();
+		void reset();
+		void setPosition(ni::Float3 newPosition) { position = newPosition; }
+
+	private:
+		ni::Float3 position;
+		ni::Float3 velocity;
+		ni::Float3 direction;
+		ni::Float3 euler;
+		ni::Float2 currMousePoint;
+		ni::Float2 prevMousePoint;
+		ni::Float4x4 viewMatrix;
 	};
 
 }

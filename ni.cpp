@@ -30,6 +30,7 @@
 
 static bool keysDown[512];
 static bool mouseBtnsDown[3];
+static bool mouseBtnsClick[3];
 static ni::Renderer renderer = {};
 static void loadPIX() {
     if (GetModuleHandleA("WinPixGpuCapture.dll") == 0) {
@@ -84,6 +85,33 @@ ni::RootSignatureDescriptorRange& ni::RootSignatureDescriptorRange::addRange(D3D
     range.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
     ranges.add(range);
     return *this;
+}
+
+void ni::RootSignatureBuilder::addRootParameterCBV(uint32_t shaderRegister, uint32_t registerSpace, D3D12_SHADER_VISIBILITY shaderVisibility) {
+    D3D12_ROOT_PARAMETER rootParam = {};
+    rootParam.ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
+    rootParam.Descriptor.ShaderRegister = shaderRegister;
+    rootParam.Descriptor.RegisterSpace = registerSpace;
+    rootParam.ShaderVisibility = shaderVisibility;
+    rootParameters.add(rootParam);
+}
+
+void ni::RootSignatureBuilder::addRootParameterSRV(uint32_t shaderRegister, uint32_t registerSpace, D3D12_SHADER_VISIBILITY shaderVisibility) {
+    D3D12_ROOT_PARAMETER rootParam = {};
+    rootParam.ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV;
+    rootParam.Descriptor.ShaderRegister = shaderRegister;
+    rootParam.Descriptor.RegisterSpace = registerSpace;
+    rootParam.ShaderVisibility = shaderVisibility;
+    rootParameters.add(rootParam);
+}
+
+void ni::RootSignatureBuilder::addRootParameterUAV(uint32_t shaderRegister, uint32_t registerSpace, D3D12_SHADER_VISIBILITY shaderVisibility) {
+    D3D12_ROOT_PARAMETER rootParam = {};
+    rootParam.ParameterType = D3D12_ROOT_PARAMETER_TYPE_UAV;
+    rootParam.Descriptor.ShaderRegister = shaderRegister;
+    rootParam.Descriptor.RegisterSpace = registerSpace;
+    rootParam.ShaderVisibility = shaderVisibility;
+    rootParameters.add(rootParam);
 }
 
 void ni::RootSignatureBuilder::addRootParameterDescriptorTable(const D3D12_DESCRIPTOR_RANGE* ranges, uint32_t rangeNum, D3D12_SHADER_VISIBILITY shaderVisibility) {
@@ -152,6 +180,122 @@ ni::DescriptorTable ni::DescriptorAllocator::allocateDescriptorTable(uint32_t de
     return table;
 }
 
+static ID3D12RootSignature* buildRootSignature(ni::BindingLayout& layout, bool compute) {
+    // Fix descriptor tables
+    for (uint32_t index = 0; index < layout.rootParameterNum; ++index) {
+        if (layout.rootParameters[index].ParameterType == D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE) {
+            uint64_t rangeIndex = (uint64_t)layout.rootParameters[index].DescriptorTable.pDescriptorRanges;
+            layout.rootParameters[index].DescriptorTable.pDescriptorRanges = &layout.descriptorTableRanges[rangeIndex];
+        }
+    }
+
+    ID3DBlob* rootSignatureBlob = nullptr;
+    ID3DBlob* errorBlob = nullptr;
+    D3D12_ROOT_SIGNATURE_DESC rootSignatureDesc = {};
+    rootSignatureDesc.NumParameters = layout.rootParameterNum;
+    rootSignatureDesc.pParameters = layout.rootParameters;
+    rootSignatureDesc.NumStaticSamplers = layout.staticSamplerNum;
+    rootSignatureDesc.pStaticSamplers = layout.staticSamplers;
+    rootSignatureDesc.Flags = compute ? D3D12_ROOT_SIGNATURE_FLAG_NONE : D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
+    if (D3D12SerializeRootSignature(&rootSignatureDesc, D3D_ROOT_SIGNATURE_VERSION_1, &rootSignatureBlob, &errorBlob) != S_OK) {
+        NI_PANIC("Failed to serialize root signature.\n%s", errorBlob->GetBufferPointer());
+    }
+    ID3D12RootSignature* rootSignature = nullptr;
+    NI_D3D_ASSERT(ni::getDevice()->CreateRootSignature(0, rootSignatureBlob->GetBufferPointer(), rootSignatureBlob->GetBufferSize(), IID_PPV_ARGS(&rootSignature)), "Failed to create root signature");
+    return rootSignature;
+}
+
+ni::PipelineState ni::buildComputePipeline(ComputePipelineDesc& desc) {
+    if (ID3D12RootSignature* rootSignature = buildRootSignature(desc.layout, true)) {
+        D3D12_COMPUTE_PIPELINE_STATE_DESC psoDesc = {};
+        psoDesc.pRootSignature = rootSignature;
+        psoDesc.CS = desc.shader;
+        psoDesc.NodeMask = 0;
+        psoDesc.Flags = D3D12_PIPELINE_STATE_FLAG_NONE;
+        if (ID3D12PipelineState* pso = ni::createComputePipelineState(psoDesc)) {
+            return { rootSignature, pso };
+        }
+        NI_D3D_RELEASE(rootSignature);
+    }
+    return { nullptr, nullptr };
+}
+
+ni::PipelineState ni::buildGraphicsPipeline(GraphicsPipelineDesc& desc) {
+    if (ID3D12RootSignature* rootSignature = buildRootSignature(desc.layout, true)) {
+        ni::Array<D3D12_INPUT_ELEMENT_DESC, uint32_t> inputElements;
+        for (uint32_t bufferIndex = 0; bufferIndex < desc.vertex.vertexBuffers.getNum(); ++bufferIndex) {
+            for (uint32_t attribIndex = 0; attribIndex < desc.vertex.vertexBuffers[bufferIndex].vertexAttributes.getNum(); ++attribIndex) {
+                const VertexAttribute& attrib = desc.vertex.vertexBuffers[bufferIndex].vertexAttributes[attribIndex];
+                D3D12_INPUT_ELEMENT_DESC elementDesc = {};
+                elementDesc.SemanticName = attrib.semanticName;
+                elementDesc.SemanticIndex = attrib.semanticIndex;
+                elementDesc.Format = attrib.format;
+                elementDesc.InputSlot = bufferIndex;
+                elementDesc.AlignedByteOffset = attrib.offset;
+                elementDesc.InputSlotClass = D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA;
+                elementDesc.InstanceDataStepRate = 0;
+                inputElements.add(elementDesc);
+            }
+        }
+
+        D3D12_GRAPHICS_PIPELINE_STATE_DESC psoDesc = {};
+        psoDesc.pRootSignature = rootSignature;
+        psoDesc.VS = desc.vertex.shader;
+        psoDesc.PS = desc.pixel.shader;
+        psoDesc.BlendState.AlphaToCoverageEnable = false;
+        psoDesc.BlendState.IndependentBlendEnable = false;
+
+        for (uint32_t index = 0; index < desc.pixel.renderTargets.getNum(); ++index) {
+            psoDesc.BlendState.RenderTarget[index].BlendEnable = true;
+            psoDesc.BlendState.RenderTarget[index].LogicOpEnable = false;
+            psoDesc.BlendState.RenderTarget[index].SrcBlend = D3D12_BLEND_SRC_ALPHA;
+            psoDesc.BlendState.RenderTarget[index].DestBlend = D3D12_BLEND_INV_SRC_ALPHA;
+            psoDesc.BlendState.RenderTarget[index].BlendOp = D3D12_BLEND_OP_ADD;
+            psoDesc.BlendState.RenderTarget[index].SrcBlendAlpha = D3D12_BLEND_ONE;
+            psoDesc.BlendState.RenderTarget[index].DestBlendAlpha = D3D12_BLEND_INV_SRC_ALPHA;
+            psoDesc.BlendState.RenderTarget[index].BlendOpAlpha = D3D12_BLEND_OP_ADD;
+            psoDesc.BlendState.RenderTarget[index].LogicOp = D3D12_LOGIC_OP_NOOP;
+            psoDesc.BlendState.RenderTarget[index].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+        }
+
+        psoDesc.SampleMask = UINT_MAX;
+        psoDesc.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
+        psoDesc.RasterizerState.CullMode = desc.rasterizer.cullMode;
+        psoDesc.RasterizerState.FrontCounterClockwise = false;
+        psoDesc.RasterizerState.DepthBias = D3D12_DEFAULT_DEPTH_BIAS;
+        psoDesc.RasterizerState.DepthBiasClamp = D3D12_DEFAULT_DEPTH_BIAS_CLAMP;
+        psoDesc.RasterizerState.SlopeScaledDepthBias = D3D12_DEFAULT_SLOPE_SCALED_DEPTH_BIAS;
+        psoDesc.RasterizerState.DepthClipEnable = true;
+        psoDesc.RasterizerState.MultisampleEnable = false;
+        psoDesc.RasterizerState.AntialiasedLineEnable = false;
+        psoDesc.RasterizerState.ForcedSampleCount = 0;
+        psoDesc.RasterizerState.ConservativeRaster = D3D12_CONSERVATIVE_RASTERIZATION_MODE_OFF;
+        psoDesc.DepthStencilState.DepthEnable = desc.pixel.depthStencilFormat != DXGI_FORMAT_UNKNOWN;
+        psoDesc.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ALL;
+        psoDesc.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_LESS_EQUAL;
+        psoDesc.DepthStencilState.StencilEnable = false;
+        psoDesc.DepthStencilState.StencilReadMask = D3D12_DEFAULT_STENCIL_READ_MASK;
+        psoDesc.DepthStencilState.StencilWriteMask = D3D12_DEFAULT_STENCIL_WRITE_MASK;
+        psoDesc.DepthStencilState.FrontFace = { D3D12_STENCIL_OP_KEEP, D3D12_STENCIL_OP_KEEP, D3D12_STENCIL_OP_KEEP, D3D12_COMPARISON_FUNC_ALWAYS };
+        psoDesc.DepthStencilState.BackFace = { D3D12_STENCIL_OP_KEEP, D3D12_STENCIL_OP_KEEP, D3D12_STENCIL_OP_KEEP, D3D12_COMPARISON_FUNC_ALWAYS };
+        psoDesc.InputLayout.pInputElementDescs = inputElements.getData();
+        psoDesc.InputLayout.NumElements = inputElements.getNum();
+        psoDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+        psoDesc.NumRenderTargets = desc.pixel.renderTargets.getNum();
+        for (uint32_t index = 0; index < desc.pixel.renderTargets.getNum(); ++index) {
+            psoDesc.RTVFormats[index] = desc.pixel.renderTargets[index];
+        }
+        psoDesc.DSVFormat = desc.pixel.depthStencilFormat;
+        psoDesc.SampleDesc = { 1, 0 };
+        psoDesc.Flags = D3D12_PIPELINE_STATE_FLAG_NONE;
+        if (ID3D12PipelineState* pso = ni::createGraphicsPipelineState(psoDesc)) {
+            return { rootSignature, pso };
+        }
+        NI_D3D_RELEASE(rootSignature);
+    }
+    return { nullptr, nullptr };
+}
+
 void ni::init(uint32_t width, uint32_t height, const char* title) {
     memset(&renderer, 0, sizeof(renderer));
 	renderer.windowWidth = width;
@@ -163,6 +307,7 @@ void ni::init(uint32_t width, uint32_t height, const char* title) {
 
     memset(keysDown, 0, sizeof(keysDown));
     memset(mouseBtnsDown, 0, sizeof(mouseBtnsDown));
+    memset(mouseBtnsClick, 0, sizeof(mouseBtnsClick));
 
 #if NI_USE_FULLSCREEN
     renderer.windowWidth = GetSystemMetrics(SM_CXSCREEN);
@@ -217,15 +362,13 @@ void ni::init(uint32_t width, uint32_t height, const char* title) {
     int32_t adjustedWidth = windowRect.right - windowRect.left;
     int32_t adjustedHeight = windowRect.bottom - windowRect.top;
 
-
-
     renderer.windowHandle = CreateWindowExA(
         WS_EX_LEFT, "WindowClass", title, windowStyle, 100,
         100, adjustedWidth, adjustedHeight, nullptr, nullptr,
         GetModuleHandle(nullptr), nullptr);
-    loadPIX();
 
 #if _DEBUG
+    loadPIX();
     NI_D3D_ASSERT(D3D12GetDebugInterface(IID_PPV_ARGS(&renderer.debugInterface)), "Failed to create debug interface");
     renderer.debugInterface->EnableDebugLayer();
     renderer.debugInterface->SetEnableGPUBasedValidation(true);
@@ -255,16 +398,6 @@ void ni::init(uint32_t width, uint32_t height, const char* title) {
         frame.commandAllocator->SetName(L"gfx::frame::commandAllocator");
         frame.commandList->SetName(L"gfx::frame::commandList");
         frame.fence->SetName(L"gfx::frame::fence");
-        D3D12_DESCRIPTOR_HEAP_DESC descriptorHeapDesc = {};
-        descriptorHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
-        descriptorHeapDesc.NumDescriptors = NI_MAX_DESCRIPTORS;
-        descriptorHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
-        descriptorHeapDesc.NodeMask = 0;
-        NI_D3D_ASSERT(renderer.device->CreateDescriptorHeap(&descriptorHeapDesc, IID_PPV_ARGS(&frame.descriptorAllocator.descriptorHeap)), "Failed to create descriptor heap");
-        frame.descriptorAllocator.descriptorHandleSize = renderer.device->GetDescriptorHandleIncrementSize(descriptorHeapDesc.Type);
-        frame.descriptorAllocator.descriptorAllocated = 0;
-        frame.descriptorAllocator.gpuBaseHandle = frame.descriptorAllocator.descriptorHeap->GetGPUDescriptorHandleForHeapStart();
-        frame.descriptorAllocator.cpuBaseHandle = frame.descriptorAllocator.descriptorHeap->GetCPUDescriptorHandleForHeapStart();
         frame.frameIndex = index;
     }
 
@@ -292,8 +425,10 @@ void ni::init(uint32_t width, uint32_t height, const char* title) {
 
     NI_D3D_ASSERT(renderer.factory->CreateSwapChain((IUnknown*)renderer.commandQueue, &swapChainDesc, (IDXGISwapChain**)&renderer.swapChain), "Failed to create swapchain");
     for (uint32_t index = 0; index < NI_BACKBUFFER_COUNT; ++index) {
-        renderer.swapChain->GetBuffer(index, IID_PPV_ARGS(&renderer.backbuffers[index]));
-        renderer.backbuffers[index]->SetName(L"gfx::backbuffer");
+        
+        renderer.swapChain->GetBuffer(index, IID_PPV_ARGS(&renderer.backbuffers[index].texture.resource));
+        renderer.backbuffers[index].texture.resource->SetName(L"gfx::backbuffer");
+        renderer.backbuffers[index].texture.state = D3D12_RESOURCE_STATE_PRESENT;
     }
 
     D3D12_DESCRIPTOR_HEAP_DESC rtvDescriptorHeapDesc = {};
@@ -340,10 +475,9 @@ void ni::destroy() {
         NI_D3D_RELEASE(frame.commandAllocator);
         NI_D3D_RELEASE(frame.fence);
         CloseHandle(frame.fenceEvent);
-        NI_D3D_RELEASE(frame.descriptorAllocator.descriptorHeap);
     }
     for (uint32_t index = 0; index < NI_BACKBUFFER_COUNT; ++index) {
-        NI_D3D_RELEASE(renderer.backbuffers[index]);
+        NI_D3D_RELEASE(renderer.backbuffers[index].texture.resource);
     }
     if (renderer.presentFence->GetCompletedValue() != renderer.presentFenceValue) {
         renderer.presentFence->SetEventOnCompletion(renderer.presentFenceValue, renderer.presentFenceEvent);
@@ -378,6 +512,7 @@ void ni::destroy() {
 
 void ni::pollEvents() {
     MSG message;
+    memset(mouseBtnsClick, 0, sizeof(mouseBtnsClick));
     while (PeekMessageA(&message, nullptr, 0, 0, PM_REMOVE)) {
         switch (message.message) {
         case WM_MOUSEWHEEL:
@@ -397,22 +532,34 @@ void ni::pollEvents() {
             renderer.mouseY = (float)GET_Y_LPARAM(message.lParam);
             break;
         case WM_LBUTTONDOWN:
+            if (!mouseBtnsDown[0]) {
+                mouseBtnsClick[0] = true;
+            }
             mouseBtnsDown[0] = true;
             break;
         case WM_LBUTTONUP:
             mouseBtnsDown[0] = false;
+            mouseBtnsClick[0] = false;
             break;
         case WM_RBUTTONDOWN:
+            if (!mouseBtnsDown[2]) {
+                mouseBtnsClick[2] = true;
+            }
             mouseBtnsDown[2] = true;
             break;
         case WM_RBUTTONUP:
             mouseBtnsDown[2] = false;
+            mouseBtnsClick[2] = false;
             break;
         case WM_MBUTTONDOWN:
+            if (!mouseBtnsDown[1]) {
+                mouseBtnsClick[1] = true;
+            }
             mouseBtnsDown[1] = true;
             break;
         case WM_MBUTTONUP:
             mouseBtnsDown[1] = false;
+            mouseBtnsClick[1] = false;
             break;
         case WM_QUIT:
             renderer.shouldQuit = true;
@@ -441,10 +588,6 @@ ni::FrameData& ni::beginFrame() {
     FrameData& frame = renderer.frames[renderer.currentFrame];
     NI_D3D_ASSERT(frame.commandAllocator->Reset(), "Failed to reset command allocator");
     NI_D3D_ASSERT(frame.commandList->Reset(frame.commandAllocator, nullptr), "Failed to reset command list");
-    frame.descriptorAllocator.reset();
-    // Allocate all descriptors to allow for bindless resources.
-    frame.descriptorTable = frame.descriptorAllocator.allocateDescriptorTable(NI_MAX_DESCRIPTORS);
-    frame.commandList->SetDescriptorHeaps(1, &frame.descriptorAllocator.descriptorHeap);
 
     // Upload texture data
     for (uint32_t index = 0; index < renderer.imageToUploadNum; ++index) {
@@ -515,8 +658,8 @@ void ni::endFrame() {
     renderer.currentFrame = (renderer.currentFrame + 1) % NI_FRAME_COUNT;
 }
 
-ID3D12Resource* ni::getCurrentBackbuffer() {
-    return renderer.backbuffers[renderer.presentFrame];
+ni::Texture* ni::getCurrentBackbuffer() {
+    return &renderer.backbuffers[renderer.presentFrame];
 }
 
 void ni::present(bool vsync) {
@@ -529,6 +672,27 @@ void ni::present(bool vsync) {
     NI_D3D_ASSERT(renderer.commandQueue->Signal(renderer.presentFence, ++renderer.presentFenceValue), "Failed to signal present fence");
     renderer.presentFrame = renderer.presentFenceValue % NI_BACKBUFFER_COUNT;
     renderer.frameCount++;
+}
+
+ni::DescriptorAllocator* ni::createDescriptorAllocator(D3D12_DESCRIPTOR_HEAP_TYPE type, uint32_t descriptorNum, D3D12_DESCRIPTOR_HEAP_FLAGS flags) {
+    D3D12_DESCRIPTOR_HEAP_DESC descriptorHeapDesc = {};
+    descriptorHeapDesc.Type = type;
+    descriptorHeapDesc.NumDescriptors = descriptorNum;
+    descriptorHeapDesc.Flags = flags;
+    descriptorHeapDesc.NodeMask = 0;
+    ID3D12DescriptorHeap* descriptorHeap = nullptr;
+    ni::DescriptorAllocator* descriptorAllocator = new ni::DescriptorAllocator();
+    NI_D3D_ASSERT(renderer.device->CreateDescriptorHeap(&descriptorHeapDesc, IID_PPV_ARGS(&descriptorAllocator->descriptorHeap)), "Failed to create descriptor heap");
+    descriptorAllocator->descriptorAllocated = 0;
+    descriptorAllocator->gpuBaseHandle = descriptorAllocator->descriptorHeap->GetGPUDescriptorHandleForHeapStart();
+    descriptorAllocator->cpuBaseHandle = descriptorAllocator->descriptorHeap->GetCPUDescriptorHandleForHeapStart();
+    descriptorAllocator->descriptorHandleSize = renderer.device->GetDescriptorHandleIncrementSize(type);
+    return descriptorAllocator;
+}
+
+void ni::destroyDescriptorAllocator(DescriptorAllocator* descriptorAllocator) {
+    NI_D3D_RELEASE(descriptorAllocator->descriptorHeap);
+    delete descriptorAllocator;
 }
 
 ID3D12PipelineState* ni::createGraphicsPipelineState(const wchar_t* name, const D3D12_GRAPHICS_PIPELINE_STATE_DESC& psoDesc) {
@@ -545,10 +709,40 @@ ID3D12PipelineState* ni::createComputePipelineState(const wchar_t* name, const D
     return pso;
 }
 
+ID3D12PipelineState* ni::createGraphicsPipelineState(const D3D12_GRAPHICS_PIPELINE_STATE_DESC& psoDesc) {
+    ID3D12PipelineState* pso = nullptr;
+    NI_D3D_ASSERT(renderer.device->CreateGraphicsPipelineState(&psoDesc, IID_PPV_ARGS(&pso)), "Failed to create graphics pipeline state");
+    return pso;
+}
+
+ID3D12PipelineState* ni::createComputePipelineState(const D3D12_COMPUTE_PIPELINE_STATE_DESC& psoDesc) {
+    ID3D12PipelineState* pso = nullptr;
+    NI_D3D_ASSERT(renderer.device->CreateComputePipelineState(&psoDesc, IID_PPV_ARGS(&pso)), "Failed to create compute pipeline state");
+    return pso;
+}
+
 float ni::getViewWidth() { return (float)renderer.windowWidth; }
 float ni::getViewHeight() { return (float)renderer.windowHeight; }
 
+float ni::getViewAspectRatio() {
+    return ni::getViewWidth() / ni::getViewHeight();
+}
+
+uint32_t ni::getViewWidthUint() {
+    return renderer.windowWidth;
+}
+
+uint32_t ni::getViewHeightUint() {
+    return renderer.windowHeight;
+}
+
 ni::Resource ni::createBuffer(const wchar_t* name, size_t bufferSize, BufferType type, bool initToZero, D3D12_RESOURCE_FLAGS flags) {
+    ni::Resource resource = createBuffer(bufferSize, type, initToZero, flags);
+    resource.resource->SetName(name);
+    return resource;
+}
+
+ni::Resource ni::createBuffer(size_t bufferSize, BufferType type, bool initToZero, D3D12_RESOURCE_FLAGS flags) {
     D3D12_HEAP_TYPE heapType;
     D3D12_RESOURCE_STATES initialState;
     switch (type) {
@@ -597,7 +791,7 @@ ni::Resource ni::createBuffer(const wchar_t* name, size_t bufferSize, BufferType
         DXGI_FORMAT_UNKNOWN,
         { 1, 0},
         D3D12_TEXTURE_LAYOUT_ROW_MAJOR,
-        flags 
+        flags
     };
     D3D12_HEAP_PROPERTIES heapProps = {
         heapType,
@@ -618,7 +812,6 @@ ni::Resource ni::createBuffer(const wchar_t* name, size_t bufferSize, BufferType
         &resourceDesc, initialState, nullptr,
         IID_PPV_ARGS(&resource)),
         "Failed to create buffer resource");
-    resource->SetName(name);
     return { resource, initialState };
 }
 
@@ -646,6 +839,10 @@ float ni::mouseY() {
 
 bool ni::mouseDown(MouseButton button) {
     return mouseBtnsDown[(uint32_t)button];
+}
+
+bool ni::mouseClick(MouseButton button) {
+    return mouseBtnsClick[(uint32_t)button];
 }
 
 bool ni::keyDown(KeyCode keyCode) {
@@ -821,14 +1018,22 @@ size_t ni::getDXGIFormatBytes(DXGI_FORMAT format) {
 }
 
 ni::Texture* ni::createTexture(const wchar_t* name, uint32_t width, uint32_t height, uint32_t depth, const void* pixels, DXGI_FORMAT dxgiFormat, D3D12_RESOURCE_FLAGS flags) {
+    ni::Texture* texture = createTexture(width, height, depth, pixels, dxgiFormat, flags);
+    texture->texture.resource->SetName(name);
+    return texture;
+}
+
+ni::Texture* ni::createTexture(uint32_t width, uint32_t height, uint32_t depth, const void* pixels, DXGI_FORMAT dxgiFormat, D3D12_RESOURCE_FLAGS flags) {
     Texture* texture = new Texture();
     D3D12_RESOURCE_DIMENSION dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
 
     if (width > 1 && height > 1 && depth > 1) {
         dimension = D3D12_RESOURCE_DIMENSION_TEXTURE3D;
-    } else if (width >= 1 && height >= 1 && depth == 1) {
+    }
+    else if (width >= 1 && height >= 1 && depth == 1) {
         dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
-    } else if (width >= 1 && height == 1 && depth == 1) {
+    }
+    else if (width >= 1 && height == 1 && depth == 1) {
         dimension = D3D12_RESOURCE_DIMENSION_TEXTURE1D;
     }
 
@@ -861,8 +1066,8 @@ ni::Texture* ni::createTexture(const wchar_t* name, uint32_t width, uint32_t hei
         clearValue.DepthStencil.Depth = 1;
         clearValue.DepthStencil.Stencil = 0;
         clearValuePtr = &clearValue;
-    } 
-    
+    }
+
     if ((flags & D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET) > 0) {
         clearValue.Color[0] = 0.0f;
         clearValue.Color[1] = 0.0f;
@@ -872,7 +1077,6 @@ ni::Texture* ni::createTexture(const wchar_t* name, uint32_t width, uint32_t hei
     }
 
     NI_D3D_ASSERT(ni::getDevice()->CreateCommittedResource(&heapProps, D3D12_HEAP_FLAG_ALLOW_ALL_BUFFERS_AND_TEXTURES, &resourceDesc, initialState, clearValuePtr, IID_PPV_ARGS(&texture->texture.resource)), "Failed to create image resource");
-    texture->texture.resource->SetName(name);
     texture->texture.state = initialState;
     texture->width = width;
     texture->height = height;
@@ -884,11 +1088,11 @@ ni::Texture* ni::createTexture(const wchar_t* name, uint32_t width, uint32_t hei
         uint64_t alignedWidth = alignSize(width, D3D12_TEXTURE_DATA_PITCH_ALIGNMENT);
         uint64_t dataSize = alignedWidth * height * depth * pixelSize;
         uint64_t bufferSize = dataSize < 256 ? 256 : dataSize;
-        texture->upload = ni::createBuffer(L"SpriteImage::upload", (size_t)bufferSize, ni::UPLOAD_BUFFER, false);
+        texture->upload = ni::createBuffer((size_t)bufferSize, ni::UPLOAD_BUFFER, false);
         texture->cpuData = malloc(pixelSize * width * height * depth);
         NI_ASSERT(texture->cpuData != nullptr, "Failed to allocate cpu data for uploading to texture memory");
         if (texture->cpuData != nullptr) {
-            memcpy((void*)texture->cpuData, pixels, pixelSize * width * height);
+            memcpy((void*)texture->cpuData, pixels, pixelSize * width * height * depth);
         }
         renderer.imagesToUpload[renderer.imageToUploadNum++] = texture;
     }
@@ -1023,6 +1227,150 @@ ni::DescriptorHandle ni::DescriptorTable::allocate() {
     DescriptorHandle handle = { gpuHandle(allocated), cpuHandle(allocated) };
     allocated += 1;
     return handle;
+}
+
+void ni::DescriptorTable::allocUAVBuffer(ni::Resource& resource, ni::Resource* counter, DXGI_FORMAT format, uint64_t firstElement, uint32_t numElements, uint32_t structureByteStride, uint64_t counterOffsetInBytes, bool rawBuffer) {
+    D3D12_UNORDERED_ACCESS_VIEW_DESC uavDesc = {};
+    uavDesc.Format = format;
+    uavDesc.ViewDimension = D3D12_UAV_DIMENSION_BUFFER;
+    uavDesc.Buffer.FirstElement = firstElement;
+    uavDesc.Buffer.NumElements = numElements;
+    uavDesc.Buffer.StructureByteStride = structureByteStride;
+    uavDesc.Buffer.CounterOffsetInBytes = counterOffsetInBytes;
+    uavDesc.Buffer.Flags = rawBuffer ? D3D12_BUFFER_UAV_FLAG_RAW : D3D12_BUFFER_UAV_FLAG_NONE;
+    ni::getDevice()->CreateUnorderedAccessView(resource.resource, counter ? counter->resource : nullptr, &uavDesc, allocate().cpuHandle);
+}
+
+void ni::DescriptorTable::allocUAVTex1D(ni::Resource& resource, ni::Resource* counter, DXGI_FORMAT format, uint32_t mipSlice) {
+    D3D12_UNORDERED_ACCESS_VIEW_DESC uavDesc = {};
+    uavDesc.Format = format;
+    uavDesc.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE1D;
+    uavDesc.Texture1D.MipSlice = mipSlice;
+    ni::getDevice()->CreateUnorderedAccessView(resource.resource, counter ? counter->resource : nullptr, &uavDesc, allocate().cpuHandle);
+}
+
+void ni::DescriptorTable::allocUAVTex1DArray(ni::Resource& resource, ni::Resource* counter, DXGI_FORMAT format, uint32_t mipSlice, uint32_t firstArraySlice, uint32_t arraySize) {
+    D3D12_UNORDERED_ACCESS_VIEW_DESC uavDesc = {};
+    uavDesc.Format = format;
+    uavDesc.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE1DARRAY;
+    uavDesc.Texture1DArray.MipSlice = mipSlice;
+    uavDesc.Texture1DArray.FirstArraySlice = firstArraySlice;
+    uavDesc.Texture1DArray.ArraySize = arraySize;
+    ni::getDevice()->CreateUnorderedAccessView(resource.resource, counter ? counter->resource : nullptr, &uavDesc, allocate().cpuHandle);
+}
+
+void ni::DescriptorTable::allocUAVTex2D(ni::Resource& resource, ni::Resource* counter, DXGI_FORMAT format, uint32_t mipSlice, uint32_t planeSlice) {
+    D3D12_UNORDERED_ACCESS_VIEW_DESC uavDesc = {};
+    uavDesc.Format = format;
+    uavDesc.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D;
+    uavDesc.Texture2D.MipSlice = mipSlice;
+    uavDesc.Texture2D.PlaneSlice = planeSlice;
+    ni::getDevice()->CreateUnorderedAccessView(resource.resource, counter ? counter->resource : nullptr, &uavDesc, allocate().cpuHandle);
+}
+
+void ni::DescriptorTable::allocUAVTex2DArray(ni::Resource& resource, ni::Resource* counter, DXGI_FORMAT format, uint32_t mipSlice, uint32_t firstArraySlice, uint32_t arraySize, uint32_t planeSlice) {
+    D3D12_UNORDERED_ACCESS_VIEW_DESC uavDesc = {};
+    uavDesc.Format = format;
+    uavDesc.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2DARRAY;
+    uavDesc.Texture2DArray.MipSlice = mipSlice;
+    uavDesc.Texture2DArray.PlaneSlice = planeSlice;
+    uavDesc.Texture2DArray.FirstArraySlice = firstArraySlice;
+    uavDesc.Texture2DArray.ArraySize = arraySize;
+    ni::getDevice()->CreateUnorderedAccessView(resource.resource, counter ? counter->resource : nullptr, &uavDesc, allocate().cpuHandle);
+}
+
+void ni::DescriptorTable::allocUAVTex3D(ni::Resource& resource, ni::Resource* counter, DXGI_FORMAT format, uint32_t mipSlice, uint32_t firstWSlice, uint32_t wSize) {
+    D3D12_UNORDERED_ACCESS_VIEW_DESC uavDesc = {};
+    uavDesc.Format = format;
+    uavDesc.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE3D;
+    uavDesc.Texture3D.MipSlice = mipSlice;
+    uavDesc.Texture3D.FirstWSlice = firstWSlice;
+    uavDesc.Texture3D.WSize = wSize;
+    ni::getDevice()->CreateUnorderedAccessView(resource.resource, counter ? counter->resource : nullptr, &uavDesc, allocate().cpuHandle);
+}
+
+void ni::DescriptorTable::allocSRVBuffer(ni::Resource& resource, DXGI_FORMAT format, uint64_t firstElement, uint32_t numElements, uint32_t structureByteStride, bool rawBuffer) {
+    D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+    srvDesc.Format = format;
+    srvDesc.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
+    srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+    srvDesc.Buffer.FirstElement = firstElement;
+    srvDesc.Buffer.NumElements = numElements;
+    srvDesc.Buffer.StructureByteStride = structureByteStride;
+    srvDesc.Buffer.Flags = rawBuffer ? D3D12_BUFFER_SRV_FLAG_RAW : D3D12_BUFFER_SRV_FLAG_NONE;
+    ni::getDevice()->CreateShaderResourceView(resource.resource, &srvDesc, allocate().cpuHandle);
+}
+
+void ni::DescriptorTable::allocSRVTex1D(ni::Resource& resource, DXGI_FORMAT format, uint32_t mostDetailedMip, uint32_t mipLevels, float resourceMinLODClamp) {
+    D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+    srvDesc.Format = format;
+    srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE1D;
+    srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+    srvDesc.Texture1D.MostDetailedMip = mostDetailedMip;
+    srvDesc.Texture1D.MipLevels = mipLevels;
+    srvDesc.Texture1D.ResourceMinLODClamp = resourceMinLODClamp;
+    ni::getDevice()->CreateShaderResourceView(resource.resource, &srvDesc, allocate().cpuHandle);
+}
+
+void ni::DescriptorTable::allocSRVTex1DArray(ni::Resource& resource, DXGI_FORMAT format, uint32_t mostDetailedMip, uint32_t mipLevels, uint32_t firstArraySlice, uint32_t arraySize, float resourceMinLODClamp) {
+    D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+    srvDesc.Format = format;
+    srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE1DARRAY;
+    srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+    srvDesc.Texture1DArray.MostDetailedMip = mostDetailedMip;
+    srvDesc.Texture1DArray.MipLevels = mipLevels;
+    srvDesc.Texture1DArray.FirstArraySlice = firstArraySlice;
+    srvDesc.Texture1DArray.ArraySize = arraySize;
+    srvDesc.Texture1DArray.ResourceMinLODClamp = resourceMinLODClamp;
+    ni::getDevice()->CreateShaderResourceView(resource.resource, &srvDesc, allocate().cpuHandle);
+}
+
+void ni::DescriptorTable::allocSRVTex2D(ni::Resource& resource, DXGI_FORMAT format, uint32_t mostDetailedMip, uint32_t mipLevels, uint32_t planeSlice, float resourceMinLODClamp) {
+    D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+    srvDesc.Format = format;
+    srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+    srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+    srvDesc.Texture2D.MostDetailedMip = mostDetailedMip;
+    srvDesc.Texture2D.MipLevels = mipLevels;
+    srvDesc.Texture2D.PlaneSlice = planeSlice;
+    srvDesc.Texture2D.ResourceMinLODClamp = resourceMinLODClamp;
+    ni::getDevice()->CreateShaderResourceView(resource.resource, &srvDesc, allocate().cpuHandle);
+}
+
+void ni::DescriptorTable::allocSRVTex2DArray(ni::Resource& resource, DXGI_FORMAT format, uint32_t mostDetailedMip, uint32_t mipLevels, uint32_t firstArraySlice, uint32_t arraySize, uint32_t planeSlice, float resourceMinLODClamp) {
+    D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+    srvDesc.Format = format;
+    srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2DARRAY;
+    srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+    srvDesc.Texture2DArray.MostDetailedMip = mostDetailedMip;
+    srvDesc.Texture2DArray.MipLevels = mipLevels;
+    srvDesc.Texture2DArray.FirstArraySlice = firstArraySlice;
+    srvDesc.Texture2DArray.ArraySize = arraySize;
+    srvDesc.Texture2DArray.PlaneSlice = planeSlice;
+    srvDesc.Texture2DArray.ResourceMinLODClamp = resourceMinLODClamp;
+    ni::getDevice()->CreateShaderResourceView(resource.resource, &srvDesc, allocate().cpuHandle);
+}
+
+void ni::DescriptorTable::allocSRVTex3D(ni::Resource& resource, DXGI_FORMAT format, uint32_t mostDetailedMip, uint32_t mipLevels, float resourceMinLODClamp) {
+    D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+    srvDesc.Format = format;
+    srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE3D;
+    srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+    srvDesc.Texture3D.MostDetailedMip = mostDetailedMip;
+    srvDesc.Texture3D.MipLevels = mipLevels;
+    srvDesc.Texture3D.ResourceMinLODClamp = resourceMinLODClamp;
+    ni::getDevice()->CreateShaderResourceView(resource.resource, &srvDesc, allocate().cpuHandle);
+}
+
+void ni::DescriptorTable::allocSRVTexCube(ni::Resource& resource, DXGI_FORMAT format, uint32_t mostDetailedMip, uint32_t mipLevels, float resourceMinLODClamp) {
+    D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+    srvDesc.Format = format;
+    srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURECUBE;
+    srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+    srvDesc.TextureCube.MostDetailedMip = mostDetailedMip;
+    srvDesc.TextureCube.MipLevels = mipLevels;
+    srvDesc.TextureCube.ResourceMinLODClamp = resourceMinLODClamp;
+    ni::getDevice()->CreateShaderResourceView(resource.resource, &srvDesc, allocate().cpuHandle);
 }
 
 D3D12_GPU_DESCRIPTOR_HANDLE ni::DescriptorTable::gpuHandle(uint64_t index) {
@@ -2013,6 +2361,88 @@ namespace ni {
         c = m2;
         d = m3;
         return *this;
+    }
+    FlyCamera::FlyCamera(ni::Float3 initialPosition) {
+        position = initialPosition;
+        velocity = { 0, 0, 0 };
+        direction = { 0, 0, -1 };
+        euler = { ni::toRad(90), 0, 0 };
+    }
+    void FlyCamera::update() {
+
+        if (ni::mouseClick(ni::MOUSE_BUTTON_LEFT)) {
+            currMousePoint = { ni::mouseX(), ni::mouseY() };
+            prevMousePoint = { ni::mouseX(), ni::mouseY() };
+        }
+
+        if (ni::mouseDown(ni::MOUSE_BUTTON_LEFT)) {
+            currMousePoint = { ni::mouseX(), ni::mouseY() };
+        }
+
+        if (ni::mouseDown(ni::MOUSE_BUTTON_LEFT)) {
+            float sensitivity = 0.1f;
+            float offsetX = (currMousePoint.x - prevMousePoint.x) * sensitivity;
+            float offsetY = (currMousePoint.y - prevMousePoint.y) * sensitivity;
+            prevMousePoint = currMousePoint;
+            euler.x += ni::toRad(offsetX);
+            euler.y -= ni::toRad(offsetY);
+        }
+
+        direction.x = ni::cos(euler.x) * ni::cos(euler.y);
+        direction.y = ni::sin(euler.y);
+        direction.z = ni::sin(euler.x) * ni::cos(euler.y);
+
+        float moveSpeed = 4.15f;
+        float moveDirForward = ni::atan2(direction.z, direction.x);
+        float moveDirSide = ni::atan2(direction.z, direction.x) + (ni::PI / 2.0f);
+
+        velocity *= 0.3f;
+
+        if (ni::keyDown(ni::W)) {
+            velocity.x += moveSpeed * ni::cos(moveDirForward);
+            velocity.z += moveSpeed * ni::sin(moveDirForward);
+        }
+        else if (ni::keyDown(ni::S)) {
+            velocity.x -= moveSpeed * ni::cos(moveDirForward);
+            velocity.z -= moveSpeed * ni::sin(moveDirForward);
+        }
+
+        if (ni::keyDown(ni::D)) {
+            velocity.x += moveSpeed * ni::cos(moveDirSide);
+            velocity.z += moveSpeed * ni::sin(moveDirSide);
+        }
+        else if (ni::keyDown(ni::A)) {
+            velocity.x -= moveSpeed * ni::cos(moveDirSide);
+            velocity.z -= moveSpeed * ni::sin(moveDirSide);
+        }
+
+        if (ni::keyDown(ni::Q)) {
+            velocity.y -= moveSpeed;
+        }
+        else if (ni::keyDown(ni::E)) {
+            velocity.y += moveSpeed;
+        }
+
+        position += velocity * (1.0f / 60.0f);
+    }
+    void FlyCamera::update(ni::Float3 newPosition, ni::Float3 newEuler) {
+        euler = newEuler;
+        direction.x = ni::cos(euler.x) * ni::cos(euler.y);
+        direction.y = ni::sin(euler.y);
+        direction.z = ni::sin(euler.x) * ni::cos(euler.y);
+        position = newPosition;
+    }
+    ni::Float4x4 FlyCamera::makeViewMatrix() {
+        ni::Float3 front = direction;
+        viewMatrix.loadIdentity();
+        viewMatrix.lookAt(position, position + front.normalize(), ni::Float3(0, 1, 0));
+        return viewMatrix;
+    }
+    void FlyCamera::reset() {
+        position = 0;
+        velocity = 0;
+        direction = { 0, 0, -1 };
+        euler = { ni::toRad(90), 0, 0 };
     }
 }
 

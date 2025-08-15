@@ -208,6 +208,8 @@ namespace ni {
 
 		TSize getNum() const { return num; }
 		TSize getCapacity() const { return capacity;  }
+		size_t getNumInByteSize() const { return sizeof(T) * num; }
+		size_t getCapacityInByteSize() const { return sizeof(T) * capacity; }
 
 		const T& operator[](TSize index) const { return data[index]; }
 		T& operator[](TSize index) { return data[index]; }
@@ -288,7 +290,10 @@ namespace ni {
 	};
 	
 	struct Resource {
-		ID3D12Resource* resource;
+
+		bool isValid() const { return resource == nullptr; }
+
+		ID3D12Resource* resource = nullptr;
 		D3D12_RESOURCE_STATES state;
 	};
 
@@ -306,14 +311,14 @@ namespace ni {
 			barrierNum = 0;
 		}
 
-		void transition(Resource* resource, D3D12_RESOURCE_STATES afterState) {
-			if (resource->state != afterState) {
-				BarrierData data = { {}, resource, nullptr };
+		void transition(Resource& resource, D3D12_RESOURCE_STATES afterState) {
+			if (resource.state != afterState) {
+				BarrierData data = { {}, &resource, nullptr };
 				data.barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
 				data.barrier.Flags = D3D12_RESOURCE_BARRIER_FLAG_NONE;
 				data.barrier.Transition.Subresource = 0;
-				data.barrier.Transition.pResource = resource->resource;
-				data.barrier.Transition.StateBefore = resource->state;
+				data.barrier.Transition.pResource = resource.resource;
+				data.barrier.Transition.StateBefore = resource.state;
 				data.barrier.Transition.StateAfter = afterState;
 				barriers[barrierNum++] = data;
 			}
@@ -365,7 +370,8 @@ namespace ni {
 		void allocSRVTex2DArray(ni::Resource& resource, DXGI_FORMAT format, uint32_t mostDetailedMip, uint32_t mipLevels, uint32_t firstArraySlice, uint32_t arraySize, uint32_t planeSlice, float resourceMinLODClamp);
 		void allocSRVTex3D(ni::Resource& resource, DXGI_FORMAT format, uint32_t mostDetailedMip, uint32_t mipLevels, float resourceMinLODClamp);
 		void allocSRVTexCube(ni::Resource& resource, DXGI_FORMAT format, uint32_t mostDetailedMip, uint32_t mipLevels, float resourceMinLODClamp);
-
+		void allocRTVTex2D(ni::Resource& resource, DXGI_FORMAT format, uint32_t mipSlice, uint32_t planeSlice);
+		void allocDSVTex2D(ni::Resource& resource, DXGI_FORMAT format, uint32_t mipSlice, D3D12_DSV_FLAGS flags);
 
 		D3D12_GPU_DESCRIPTOR_HANDLE gpuHandle(uint64_t index);
 		D3D12_CPU_DESCRIPTOR_HANDLE cpuHandle(uint64_t index);
@@ -640,7 +646,7 @@ namespace ni {
 		bool shouldQuit;
 	};
 
-	void init(uint32_t width, uint32_t height, const char* title);
+	void init(uint32_t width, uint32_t height, const char* title, bool enablePIX = false /* only works when compiling debug build */);
 	void setFrameUserData(uint32_t frame, void* data);
 	void waitForCurrentFrame();
 	void waitForAllFrames();
@@ -649,7 +655,7 @@ namespace ni {
 	bool shouldQuit();
 	ni::FrameData& getFrameData();
 	ID3D12Device* getDevice();
-	ni::FrameData& beginFrame();
+	ni::FrameData* beginFrame();
 	void endFrame();
 	Texture* getCurrentBackbuffer();
 	void present(bool vsync = true);
@@ -672,9 +678,12 @@ namespace ni {
 	D3D12_GPU_DESCRIPTOR_HANDLE getDepthStencilViewGPUHandle();
 	float mouseX();
 	float mouseY();
+	float mouseWheelX();
+	float mouseWheelY();
 	bool mouseDown(MouseButton button);
 	bool mouseClick(MouseButton button);
 	bool keyDown(KeyCode keyCode);
+	char getLastChar();
 	float randomFloat();
 	uint32_t randomUint();
 	double getSeconds();
@@ -693,6 +702,118 @@ namespace ni {
 	uint64_t getFrameCount();
 	PipelineState buildComputePipeline(ComputePipelineDesc& desc);
 	PipelineState buildGraphicsPipeline(GraphicsPipelineDesc& desc);
+	void destroyPipeline(PipelineState& pipelineState);
+	void destroyBuffer(Resource& resource);
+
+	template<typename TFunc, typename TCheck>
+	void forEachKeyCode(TFunc func, TCheck check) {
+		static KeyCode keyCodes[] = {
+			ni::ALT,
+			ni::DOWN,
+			ni::LEFT,
+			ni::RIGHT,
+			ni::UP,
+			ni::BACKSPACE,
+			ni::CAPS_LOCK,
+			ni::CTRL,
+			ni::DEL,
+			ni::END,
+			ni::ENTER,
+			ni::ESC,
+			ni::F1,
+			ni::F2,
+			ni::F3,
+			ni::F4,
+			ni::F5,
+			ni::F6,
+			ni::F7,
+			ni::F8,
+			ni::F9,
+			ni::F10,
+			ni::F11,
+			ni::F12,
+			ni::HOME,
+			ni::INSERT,
+			ni::NUM_LOCK,
+			ni::NUMPAD_0,
+			ni::NUMPAD_1,
+			ni::NUMPAD_2,
+			ni::NUMPAD_3,
+			ni::NUMPAD_4,
+			ni::NUMPAD_5,
+			ni::NUMPAD_6,
+			ni::NUMPAD_7,
+			ni::NUMPAD_8,
+			ni::NUMPAD_9,
+			ni::NUMPAD_MINUS,
+			ni::NUMPAD_ASTERIKS,
+			ni::NUMPAD_DOT,
+			ni::NUMPAD_SLASH,
+			ni::NUMPAD_SUM,
+			ni::PAGE_DOWN,
+			ni::PAGE_UP,
+			ni::PAUSE,
+			ni::PRINT_SCREEN,
+			ni::SCROLL_LOCK,
+			ni::SHIFT,
+			ni::SPACE,
+			ni::TAB,
+			ni::A,
+			ni::B,
+			ni::C,
+			ni::D,
+			ni::E,
+			ni::F,
+			ni::G,
+			ni::H,
+			ni::I,
+			ni::J,
+			ni::K,
+			ni::L,
+			ni::M,
+			ni::N,
+			ni::O,
+			ni::P,
+			ni::Q,
+			ni::R,
+			ni::S,
+			ni::T,
+			ni::U,
+			ni::V,
+			ni::W,
+			ni::X,
+			ni::Y,
+			ni::Z,
+			ni::NUM_0,
+			ni::NUM_1,
+			ni::NUM_2,
+			ni::NUM_3,
+			ni::NUM_4,
+			ni::NUM_5,
+			ni::NUM_6,
+			ni::NUM_7,
+			ni::NUM_8,
+			ni::NUM_9,
+			ni::QUOTE,
+			ni::MINUS,
+			ni::COMMA,
+			ni::SLASH,
+			ni::SEMICOLON,
+			ni::LEFT_SQRBRACKET,
+			ni::RIGHT_SQRBRACKET,
+			ni::BACKSLASH,
+			ni::EQUALS
+		};
+		for (size_t index = 0; index < sizeof(keyCodes) / sizeof(KeyCode); ++index) {
+			func(keyCodes[index], check(keyCodes[index]));
+		}
+	}
+
+	template<typename TFunc>
+	static void forEachKeyDown(TFunc func) {
+		forEachKeyCode(func, ni::keyDown);
+	}
+
 }
 
 #ifdef min

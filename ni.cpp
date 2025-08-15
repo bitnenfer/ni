@@ -31,6 +31,7 @@
 static bool keysDown[512];
 static bool mouseBtnsDown[3];
 static bool mouseBtnsClick[3];
+static char lastChar = 0;
 static ni::Renderer renderer = {};
 static void loadPIX() {
     if (GetModuleHandleA("WinPixGpuCapture.dll") == 0) {
@@ -221,7 +222,7 @@ ni::PipelineState ni::buildComputePipeline(ComputePipelineDesc& desc) {
 }
 
 ni::PipelineState ni::buildGraphicsPipeline(GraphicsPipelineDesc& desc) {
-    if (ID3D12RootSignature* rootSignature = buildRootSignature(desc.layout, true)) {
+    if (ID3D12RootSignature* rootSignature = buildRootSignature(desc.layout, false)) {
         ni::Array<D3D12_INPUT_ELEMENT_DESC, uint32_t> inputElements;
         for (uint32_t bufferIndex = 0; bufferIndex < desc.vertex.vertexBuffers.getNum(); ++bufferIndex) {
             for (uint32_t attribIndex = 0; attribIndex < desc.vertex.vertexBuffers[bufferIndex].vertexAttributes.getNum(); ++attribIndex) {
@@ -296,7 +297,16 @@ ni::PipelineState ni::buildGraphicsPipeline(GraphicsPipelineDesc& desc) {
     return { nullptr, nullptr };
 }
 
-void ni::init(uint32_t width, uint32_t height, const char* title) {
+void ni::destroyPipeline(PipelineState& pipelineState) {
+    NI_D3D_RELEASE(pipelineState.pso);
+    NI_D3D_RELEASE(pipelineState.rootSignature);
+}
+
+void ni::destroyBuffer(Resource& resource) {
+    NI_D3D_RELEASE(resource.resource);
+}
+
+void ni::init(uint32_t width, uint32_t height, const char* title, bool enablePIX) {
     memset(&renderer, 0, sizeof(renderer));
 	renderer.windowWidth = width;
 	renderer.windowHeight = height;
@@ -323,6 +333,9 @@ void ni::init(uint32_t width, uint32_t height, const char* title) {
             case WM_SIZE:
                 //windowWidth = LOWORD(lParam);
                 //windowHeight = HIWORD(lParam);
+                break;
+            case WM_CHAR:
+                lastChar = (char)wParam;
                 break;
             case WM_CONTEXTMENU:
                 break;
@@ -368,7 +381,9 @@ void ni::init(uint32_t width, uint32_t height, const char* title) {
         GetModuleHandle(nullptr), nullptr);
 
 #if _DEBUG
-    loadPIX();
+    if (enablePIX) {
+        loadPIX();
+    }
     NI_D3D_ASSERT(D3D12GetDebugInterface(IID_PPV_ARGS(&renderer.debugInterface)), "Failed to create debug interface");
     renderer.debugInterface->EnableDebugLayer();
     renderer.debugInterface->SetEnableGPUBasedValidation(true);
@@ -513,11 +528,15 @@ void ni::destroy() {
 void ni::pollEvents() {
     MSG message;
     memset(mouseBtnsClick, 0, sizeof(mouseBtnsClick));
+    lastChar = 0;
     while (PeekMessageA(&message, nullptr, 0, 0, PM_REMOVE)) {
+        TranslateMessage(&message);
         switch (message.message) {
         case WM_MOUSEWHEEL:
+            break;
         case WM_MOUSEHWHEEL:
-        case WM_CHAR:
+            break;
+
         case WM_KEYDOWN:
             if (message.wParam == 27) {
                 renderer.shouldQuit = true;
@@ -584,7 +603,7 @@ ID3D12Device* ni::getDevice() {
     return renderer.device;
 }
 
-ni::FrameData& ni::beginFrame() {
+ni::FrameData* ni::beginFrame() {
     FrameData& frame = renderer.frames[renderer.currentFrame];
     NI_D3D_ASSERT(frame.commandAllocator->Reset(), "Failed to reset command allocator");
     NI_D3D_ASSERT(frame.commandList->Reset(frame.commandAllocator, nullptr), "Failed to reset command list");
@@ -646,7 +665,7 @@ ni::FrameData& ni::beginFrame() {
     }
     renderer.imageToUploadNum = 0;
 
-    return frame;
+    return &frame;
 }
 
 void ni::endFrame() {
@@ -837,6 +856,14 @@ float ni::mouseY() {
     return renderer.mouseY;
 }
 
+float ni::mouseWheelX() {
+    return 0.0f;
+}
+
+float ni::mouseWheelY() {
+    return 0.0f;
+}
+
 bool ni::mouseDown(MouseButton button) {
     return mouseBtnsDown[(uint32_t)button];
 }
@@ -847,6 +874,10 @@ bool ni::mouseClick(MouseButton button) {
 
 bool ni::keyDown(KeyCode keyCode) {
     return keysDown[(uint32_t)keyCode];
+}
+
+char ni::getLastChar() {
+    return lastChar;
 }
 
 float ni::randomFloat() {
@@ -1371,6 +1402,24 @@ void ni::DescriptorTable::allocSRVTexCube(ni::Resource& resource, DXGI_FORMAT fo
     srvDesc.TextureCube.MipLevels = mipLevels;
     srvDesc.TextureCube.ResourceMinLODClamp = resourceMinLODClamp;
     ni::getDevice()->CreateShaderResourceView(resource.resource, &srvDesc, allocate().cpuHandle);
+}
+
+void ni::DescriptorTable::allocRTVTex2D(ni::Resource& resource, DXGI_FORMAT format, uint32_t mipSlice, uint32_t planeSlice) {
+    D3D12_RENDER_TARGET_VIEW_DESC rtvDesc = {};
+    rtvDesc.Format = format;
+    rtvDesc.ViewDimension = D3D12_RTV_DIMENSION_TEXTURE2D;
+    rtvDesc.Texture2D.MipSlice = mipSlice;
+    rtvDesc.Texture2D.PlaneSlice = planeSlice;
+    ni::getDevice()->CreateRenderTargetView(resource.resource, &rtvDesc, allocate().cpuHandle);
+}
+
+void ni::DescriptorTable::allocDSVTex2D(ni::Resource& resource, DXGI_FORMAT format, uint32_t mipSlice, D3D12_DSV_FLAGS flags) {
+    D3D12_DEPTH_STENCIL_VIEW_DESC dsvDesc = {};
+    dsvDesc.Format = format;
+    dsvDesc.ViewDimension = D3D12_DSV_DIMENSION_TEXTURE2D;
+    dsvDesc.Flags = flags;
+    dsvDesc.Texture2D.MipSlice = mipSlice;
+    ni::getDevice()->CreateDepthStencilView(resource.resource, &dsvDesc, allocate().cpuHandle);
 }
 
 D3D12_GPU_DESCRIPTOR_HANDLE ni::DescriptorTable::gpuHandle(uint64_t index) {
